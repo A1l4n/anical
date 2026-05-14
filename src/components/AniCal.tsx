@@ -96,7 +96,30 @@ type CommunityPost = {
   created_at: string;
 };
 
+type CommunityThread = {
+  anime_id: number;
+  anime_title: string;
+  post_count: number;
+  last_post: string;
+};
+
 const DEFAULT_NOTIF: NotifSettings = { enabled: false, leadMinutes: 10, perAnime: {} };
+
+// ── Season helpers ─────────────────────────────────────────────────────────────
+type Season = "winter" | "spring" | "summer" | "fall";
+const SEASON_MONTHS: Record<Season, number> = { winter:0, spring:3, summer:6, fall:9 };
+const SEASON_EMOJI:  Record<Season, string>  = { winter:"❄️", spring:"🌸", summer:"☀️", fall:"🍂" };
+
+function monthToSeason(month: number): Season {
+  if (month <= 2) return "winter";
+  if (month <= 5) return "spring";
+  if (month <= 8) return "summer";
+  return "fall";
+}
+
+function seasonYear(season: Season, year: number): string {
+  return `${season.charAt(0).toUpperCase() + season.slice(1)} ${year}`;
+}
 
 
 // ── Utilities ──────────────────────────────────────────────────────────────────
@@ -212,6 +235,19 @@ async function fetchUpcoming(): Promise<UpcomingAnime[]> {
       mal_url: a.url,
     }];
   });
+}
+
+async function fetchCommunityThreads(): Promise<CommunityThread[]> {
+  const posts = await sbRequest<{ anime_id: number; anime_title: string; created_at: string }[]>(
+    "community_posts?select=anime_id,anime_title,created_at&order=created_at.desc&limit=300"
+  );
+  const map: Record<number, CommunityThread> = {};
+  for (const p of posts) {
+    if (!map[p.anime_id]) map[p.anime_id] = { anime_id:p.anime_id, anime_title:p.anime_title, post_count:0, last_post:p.created_at };
+    map[p.anime_id].post_count++;
+    if (p.created_at > map[p.anime_id].last_post) map[p.anime_id].last_post = p.created_at;
+  }
+  return Object.values(map).sort((a, b) => b.last_post.localeCompare(a.last_post));
 }
 
 async function fetchAnimeNewsItems(anime: Anime): Promise<NewsItem[]> {
@@ -883,7 +919,7 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
 }
 
 // ── Month view ─────────────────────────────────────────────────────────────────
-function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, search, tz, onOpen, onToggleFav, todayDayIdx }: {
+function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, search, tz, onOpen, onToggleFav, todayDayIdx, onOpenCommunity }: {
   monthOffset: number;
   setMonthOffset: (fn: (v: number) => number) => void;
   schedule: Schedule;
@@ -894,12 +930,41 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
   onOpen: (a: Anime) => void;
   onToggleFav: (id: number) => void;
   todayDayIdx: number;
+  onOpenCommunity: (a: Anime) => void;
 }) {
   const now = new Date();
   const [selectedDate, setSelectedDate] = useState<Date>(now);
   const selectedDayIdx = (selectedDate.getDay() + 6) % 7;
+
+  // ── Upcoming data (self-loaded) ──
+  const [upcoming, setUpcoming] = useState<UpcomingAnime[]>(() => {
+    const c = LS.get<{ ts: number; data: UpcomingAnime[] } | null>("anical_upcoming_cache", null);
+    return c && Date.now() - c.ts < UPCOMING_TTL ? c.data : [];
+  });
+  const [upcomingStars, setUpcomingStars] = useState<number[]>(() => LS.get<number[]>("anical_upcoming_stars", []));
+  const [upcomingLoading, setUpcomingLoading] = useState(() => {
+    const c = LS.get<{ ts: number } | null>("anical_upcoming_cache", null);
+    return !(c && Date.now() - c.ts < UPCOMING_TTL);
+  });
+
+  useEffect(() => {
+    if (!upcomingLoading) return;
+    fetchUpcoming().then((items) => {
+      setUpcoming(items);
+      LS.set("anical_upcoming_cache", { ts: Date.now(), data: items });
+    }).finally(() => setUpcomingLoading(false));
+  }, [upcomingLoading]);
+
+  const toggleUpcomingStar = (id: number) => {
+    setUpcomingStars((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      LS.set("anical_upcoming_stars", next);
+      return next;
+    });
+  };
   const monthDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   const [mYear, mMon] = [monthDate.getFullYear(), monthDate.getMonth()];
+  const currentSeason = monthToSeason(mMon);
   const firstDow = monthDate.getDay();
   const lastDay = new Date(mYear, mMon + 1, 0).getDate();
   const cells: Date[] = [];
@@ -919,53 +984,115 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
   const groups: Record<string, Anime[]> = {};
   selectedAnime.forEach((a) => { const k = a.broadcast_time || "?"; if (!groups[k]) groups[k] = []; groups[k].push(a); });
 
+  // Upcoming for this season — also include adjacent seasons from same month range
+  const seasonUpcoming = upcoming.filter((a) => {
+    if (!a.season || !a.year) return false;
+    return a.season.toLowerCase() === currentSeason && a.year === mYear;
+  });
+  // Season approximate start date (1st of season start month)
+  const seasonStartMonth = SEASON_MONTHS[currentSeason];
+  const isSeasonStartMonth = mMon === seasonStartMonth;
+
   return (
     <div style={{ padding:"0 16px 16px" }}>
+      {/* Month nav */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 0" }}>
         <button style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:8, padding:"6px 14px", fontSize:16, cursor:"pointer", fontFamily:"inherit" }} onClick={() => setMonthOffset((v) => v - 1)}>‹</button>
-        <span style={{ fontSize:17, fontWeight:700 }}>{MONTHS[mMon]} {mYear}</span>
+        <div style={{ textAlign:"center" }}>
+          <span style={{ fontSize:17, fontWeight:700 }}>{MONTHS[mMon]} {mYear}</span>
+          <div style={{ fontSize:10, color:MT, marginTop:2 }}>{SEASON_EMOJI[currentSeason]} {seasonYear(currentSeason, mYear)}</div>
+        </div>
         <button style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:8, padding:"6px 14px", fontSize:16, cursor:"pointer", fontFamily:"inherit" }} onClick={() => setMonthOffset((v) => v + 1)}>›</button>
       </div>
+
+      {/* Calendar grid */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, marginBottom:4 }}>
         {["Su","Mo","Tu","We","Th","Fr","Sa"].map((d) => <div key={d} style={{ textAlign:"center", fontSize:10, fontWeight:700, color:MT, letterSpacing:".8px", padding:"4px 0", textTransform:"uppercase" }}>{d}</div>)}
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, marginBottom:20 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, marginBottom:16 }}>
         {cells.map((date, ci) => {
           const inMonth = date.getMonth() === mMon;
           const isToday = inMonth && date.toDateString() === now.toDateString();
           const isSelected = inMonth && date.toDateString() === selectedDate.toDateString();
           const dayIdx = (date.getDay() + 6) % 7;
           const dayAnime = inMonth ? getFiltered(dayIdx) : [];
-          const borderCol = isToday ? OR : isSelected ? TX : dayAnime.length > 0 ? BD2 : "transparent";
-          const bgCol = inMonth ? (isToday ? `rgba(255,107,26,.12)` : isSelected ? BG3 : BG2) : "transparent";
+          // Mark season premiere approx date (1st of season start month)
+          const isSeasonPremiere = inMonth && isSeasonStartMonth && date.getDate() === 1 && seasonUpcoming.length > 0;
+          const borderCol = isToday ? OR : isSelected ? TX : isSeasonPremiere ? "rgba(139,92,246,.6)" : dayAnime.length > 0 ? BD2 : "transparent";
+          const bgCol = inMonth ? (isToday ? `rgba(255,107,26,.12)` : isSelected ? BG3 : isSeasonPremiere ? "rgba(139,92,246,.06)" : BG2) : "transparent";
           return (
             <div key={ci}
               style={{ aspectRatio:"1", borderRadius:8, border:`1px solid ${borderCol}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, cursor: inMonth ? "pointer" : "default", padding:2, background: bgCol, opacity: inMonth ? 1 : .18, transition:"background .15s, border-color .15s" }}
               onClick={() => { if (inMonth) setSelectedDate(new Date(date)); }}
             >
-              <div style={{ fontSize:12, fontWeight:700, color: isToday ? OR : isSelected ? TX : TX, lineHeight:1 }}>{date.getDate()}</div>
+              <div style={{ fontSize:12, fontWeight:700, color: isToday ? OR : TX, lineHeight:1 }}>{date.getDate()}</div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:2, justifyContent:"center", maxWidth:32 }}>
-                {dayAnime.slice(0, 6).map((a, j) => <div key={j} style={{ width:5, height:5, borderRadius:"50%", background: favs.includes(a.id) ? OR : BD2 }}/>)}
+                {dayAnime.slice(0, 5).map((a, j) => <div key={j} style={{ width:5, height:5, borderRadius:"50%", background: favs.includes(a.id) ? OR : BD2 }}/>)}
+                {isSeasonPremiere && <div style={{ width:5, height:5, borderRadius:"50%", background:"rgba(139,92,246,.9)" }}/>}
               </div>
-              {dayAnime.length > 6 && <div style={{ fontSize:9, color:MT2, fontWeight:600 }}>+{dayAnime.length - 6}</div>}
+              {dayAnime.length > 5 && <div style={{ fontSize:9, color:MT2, fontWeight:600 }}>+{dayAnime.length - 5}</div>}
             </div>
           );
         })}
       </div>
+
+      {/* ── Upcoming this season ── */}
+      {(seasonUpcoming.length > 0 || upcomingLoading) && (
+        <div style={{ marginBottom:16 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+            <span style={{ fontSize:11, fontWeight:800, letterSpacing:".5px", textTransform:"uppercase", padding:"4px 10px", borderRadius:99, background:"rgba(139,92,246,.12)", color:"rgba(167,139,250,1)", border:"1px solid rgba(139,92,246,.3)", flexShrink:0 }}>
+              {SEASON_EMOJI[currentSeason]} {seasonYear(currentSeason, mYear)} · Upcoming
+            </span>
+            <div style={{ flex:1, height:1, background:BD }}/>
+            {!upcomingLoading && <span style={{ fontSize:10, color:MT2, flexShrink:0 }}>{seasonUpcoming.length} announced</span>}
+          </div>
+          {upcomingLoading ? (
+            <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4 }}>
+              {[0,1,2].map(i => <div key={i} className="anical-skel" style={{ width:120, height:160, borderRadius:12, flexShrink:0 }}/>)}
+            </div>
+          ) : seasonUpcoming.length === 0 ? null : (
+            <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4, scrollbarWidth:"none" } as React.CSSProperties}>
+              {seasonUpcoming.map((a, i) => {
+                const starred = upcomingStars.includes(a.id);
+                return (
+                  <div key={a.id} style={{ flexShrink:0, width:110, background: starred ? `rgba(255,107,26,.07)` : BG2, border:`1px solid ${starred ? OR3 : "rgba(139,92,246,.2)"}`, borderRadius:12, overflow:"hidden", cursor:"pointer", animation:`cardIn .35s ${i*40}ms both`, position:"relative" }}
+                    onClick={() => onOpenCommunity({ id:a.id, title:a.title, image_url:a.imageUrl ?? null })}>
+                    {a.imageUrl
+                      ? <img src={a.imageUrl} alt="" style={{ width:"100%", height:140, objectFit:"cover", display:"block" }}/>
+                      : <div style={{ width:"100%", height:140, background:BG4, display:"flex", alignItems:"center", justifyContent:"center", fontSize:28 }}>🎬</div>}
+                    <div style={{ position:"absolute", top:6, right:6 }}>
+                      <button onClick={(e) => { e.stopPropagation(); toggleUpcomingStar(a.id); }}
+                        style={{ background:"rgba(0,0,0,.6)", border:"none", color: starred ? OR : "rgba(255,255,255,.6)", fontSize:14, cursor:"pointer", padding:"2px 4px", lineHeight:1, borderRadius:6, fontFamily:"inherit" }}>
+                        {starred ? "★" : "☆"}
+                      </button>
+                    </div>
+                    <div style={{ padding:"6px 8px 8px" }}>
+                      <div style={{ fontSize:11, fontWeight:700, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const }}>{a.title}</div>
+                      <div style={{ fontSize:9, color:"rgba(167,139,250,.8)", fontWeight:700, marginTop:3 }}>~{MONTHS[SEASON_MONTHS[currentSeason]]} {mYear}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Selected day schedule ── */}
       <div style={{ borderTop:`1px solid ${BD}`, paddingTop:12 }}>
-        <div style={{ fontSize:15, fontWeight:700, marginBottom:12 }}>
+        <div style={{ fontSize:14, fontWeight:700, marginBottom:12 }}>
           {selectedDate.toLocaleDateString([], { day:"numeric", month:"short" })}
-          <span style={{ fontWeight:400, color:MT, marginLeft:6 }}>— {DAY_SHORT[selectedDayIdx]}'s schedule ({selectedAnime.length})</span>
+          <span style={{ fontWeight:400, color:MT, marginLeft:6 }}>— {DAY_SHORT[selectedDayIdx]}'s shows ({selectedAnime.length})</span>
         </div>
         {selectedAnime.length === 0 ? (
-          <div style={{ textAlign:"center", padding:"32px 20px", color:MT, display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
-            <div style={{ fontSize:36 }}>📭</div>
-            <div style={{ fontSize:14 }}>Nothing scheduled.</div>
+          <div style={{ textAlign:"center", padding:"24px 20px", color:MT, display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
+            <div style={{ fontSize:32 }}>📭</div>
+            <div style={{ fontSize:13 }}>Nothing scheduled.</div>
           </div>
         ) : (
           Object.entries(groups).map(([time, items]) => (
             <div key={time}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 0 8px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 0 6px" }}>
                 <span style={{ fontSize:10, fontWeight:800, letterSpacing:".5px", textTransform:"uppercase", padding:"3px 10px", borderRadius:99, background:BG3, color:MT, border:`1px solid ${BD}`, flexShrink:0 }}>
                   {time !== "?" ? `${time} JST` : "Time unknown"}
                 </span>
@@ -1115,94 +1242,153 @@ function NewsSkeleton() {
   );
 }
 
-// ── Upcoming view ──────────────────────────────────────────────────────────────
-function UpcomingView() {
-  const [upcoming, setUpcoming] = useState<UpcomingAnime[]>([]);
-  const [upcomingStars, setUpcomingStars] = useState<number[]>(() => LS.get<number[]>("anical_upcoming_stars", []));
-  const [upcomingLoading, setUpcomingLoading] = useState(true);
-  const [detailUpcoming, setDetailUpcoming] = useState<UpcomingAnime | null>(null);
+// ── Community view ─────────────────────────────────────────────────────────────
+function CommunityView({ favAnime, onOpenCommunity }: { favAnime: Anime[]; onOpenCommunity: (a: Anime) => void }) {
+  const [threads, setThreads] = useState<CommunityThread[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
 
-  const toggleStar = (id: number) => {
-    setUpcomingStars((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      LS.set("anical_upcoming_stars", next);
-      return next;
-    });
-  };
-
-  const reload = () => {
-    setUpcomingLoading(true);
-    localStorage.removeItem("anical_upcoming_cache");
-    fetchUpcoming()
-      .then((items) => { setUpcoming(items); LS.set("anical_upcoming_cache", { ts: Date.now(), data: items }); })
-      .finally(() => setUpcomingLoading(false));
-  };
-
-  useEffect(() => {
-    const cached = LS.get<{ ts: number; data: UpcomingAnime[] } | null>("anical_upcoming_cache", null);
-    if (cached && Date.now() - cached.ts < UPCOMING_TTL) { setUpcoming(cached.data); setUpcomingLoading(false); return; }
-    fetchUpcoming()
-      .then((items) => { setUpcoming(items); LS.set("anical_upcoming_cache", { ts: Date.now(), data: items }); })
-      .finally(() => setUpcomingLoading(false));
+  const load = useCallback(async () => {
+    try { const t = await fetchCommunityThreads(); setThreads(t); } catch {} finally { setLoading(false); }
   }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = search.trim()
+    ? threads.filter((t) => t.anime_title.toLowerCase().includes(search.toLowerCase()))
+    : threads;
+
+  // Favorite anime that don't yet have a thread
+  const threadIds = new Set(threads.map((t) => t.anime_id));
+  const favWithoutThreads = favAnime.filter((a) => !threadIds.has(a.id));
 
   return (
     <div style={{ padding:"4px 16px 24px" }}>
-      <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", padding:"12px 0 16px" }}>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", padding:"12px 0 14px" }}>
         <div>
-          <div style={{ fontSize:22, fontWeight:900, letterSpacing:"-.5px" }}>Upcoming</div>
-          <div style={{ fontSize:12, color:MT, marginTop:2 }}>Announced & upcoming anime — star to track</div>
+          <div style={{ fontSize:22, fontWeight:900, letterSpacing:"-.5px" }}>Community</div>
+          <div style={{ fontSize:12, color:MT, marginTop:2 }}>Per-anime discussion threads</div>
         </div>
-        <button onClick={reload} style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:10, padding:"7px 12px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>↻</button>
+        <button onClick={load} style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:10, padding:"7px 12px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>↻</button>
       </div>
 
-      {upcomingStars.length > 0 && (
-        <div style={{ fontSize:11, color:OR, marginBottom:14, padding:"7px 12px", background:OR2, border:`1px solid ${OR3}`, borderRadius:10 }}>
-          ★ {upcomingStars.length} show{upcomingStars.length === 1 ? "" : "s"} on your radar
+      {/* Search */}
+      <div style={{ position:"relative", marginBottom:16 }}>
+        <div style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", pointerEvents:"none", color:MT2, fontSize:13 }}>
+          <svg width={14} height={14} viewBox="0 0 20 20" fill="none" style={{ opacity:.5 }}>
+            <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="1.8"/>
+            <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+          </svg>
+        </div>
+        <input
+          style={{ width:"100%", background:"rgba(255,255,255,0.06)", border:`1px solid ${search ? "rgba(255,107,26,.35)" : "rgba(255,255,255,0.09)"}`, borderRadius:12, padding:"10px 12px 10px 34px", color:TX, fontSize:14, fontFamily:"inherit", outline:"none", boxSizing:"border-box" } as React.CSSProperties}
+          placeholder="Search anime communities…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        {search && <button onClick={() => setSearch("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"rgba(255,255,255,.12)", border:"none", color:MT, width:20, height:20, borderRadius:"50%", cursor:"pointer", fontSize:10, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"inherit" }}>✕</button>}
+      </div>
+
+      {/* Your Shows (fav anime) */}
+      {favAnime.length > 0 && !search && (
+        <div style={{ marginBottom:20 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontSize:11, fontWeight:700, color:OR, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
+            <span>⭐</span><span>Your Shows</span>
+            <div style={{ flex:1, height:1, background:BD }}/>
+          </div>
+          <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4, scrollbarWidth:"none" } as React.CSSProperties}>
+            {favAnime.slice(0, 10).map((a) => {
+              const thread = threads.find((t) => t.anime_id === a.id);
+              return (
+                <div key={a.id}
+                  onClick={() => onOpenCommunity(a)}
+                  style={{ flexShrink:0, width:90, cursor:"pointer" }}>
+                  <div style={{ position:"relative", width:90, height:120, borderRadius:10, overflow:"hidden", background:BG4, border:`1px solid ${thread ? "rgba(255,107,26,.3)" : BD}`, marginBottom:5 }}>
+                    {a.image_url
+                      ? <img src={a.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
+                      : <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24 }}>🎬</div>}
+                    {thread && (
+                      <div style={{ position:"absolute", top:5, right:5, background:OR, borderRadius:99, fontSize:9, fontWeight:800, padding:"2px 6px", color:"#fff" }}>
+                        {thread.post_count}
+                      </div>
+                    )}
+                    <div style={{ position:"absolute", bottom:5, left:0, right:0, textAlign:"center", fontSize:9, fontWeight:800, color:"rgba(255,255,255,.65)" }}>💬</div>
+                  </div>
+                  <div style={{ fontSize:10, fontWeight:600, color:TX, lineHeight:1.3, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, textAlign:"center" }}>{a.title}</div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
-      {upcomingLoading ? [0,1,2,3,4].map((i) => <NewsSkeleton key={i}/>) :
-       upcoming.length === 0 ? <div style={{ textAlign:"center", padding:"40px 0", color:MT, fontSize:13 }}>No upcoming shows found.</div> :
-       upcoming.map((a, i) => (
-         <UpcomingCard key={a.id} anime={a} starred={upcomingStars.includes(a.id)} onToggle={toggleStar} onOpen={setDetailUpcoming} delay={i * 20}/>
-       ))}
+      {/* Active threads */}
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontSize:11, fontWeight:700, color:MT, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
+        <span>💬</span><span>Active Discussions</span>
+        {!loading && <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background:BG3, border:`1px solid ${BD}`, color:MT }}>{filtered.length}</span>}
+        <div style={{ flex:1, height:1, background:BD }}/>
+      </div>
 
-      {/* ── Detail sheet ── */}
-      {detailUpcoming && (
-        <>
-          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.82)", zIndex:200, animation:"fadeIn .2s ease-out", backdropFilter:"blur(6px)" } as React.CSSProperties} onClick={() => setDetailUpcoming(null)}/>
-          <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"88vh", overflowY:"auto", zIndex:201, animation:"sheetUp .3s cubic-bezier(.2,.7,.2,1)" }}>
-            <div style={{ width:40, height:4, background:BD2, borderRadius:2, margin:"14px auto 0" }}/>
-            <div style={{ padding:"16px 20px 48px" }}>
-              {detailUpcoming.imageUrl && <img src={detailUpcoming.imageUrl} alt="" style={{ width:"100%", height:200, objectFit:"cover", objectPosition:"top", borderRadius:14, marginBottom:16, background:BG4, display:"block" }}/>}
-              <div style={{ fontSize:21, fontWeight:800, lineHeight:1.2, marginBottom:8 }}>{detailUpcoming.title}</div>
-              <div style={{ display:"flex", gap:8, flexWrap:"wrap" as const, marginBottom:12 }}>
-                {[capitalize(detailUpcoming.season), detailUpcoming.year].filter(Boolean).join(" ") && (
-                  <span style={{ fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:6, background:OR2, color:OR, border:`1px solid ${OR3}` }}>
-                    {[capitalize(detailUpcoming.season), detailUpcoming.year].filter(Boolean).join(" ")}
-                  </span>
-                )}
-                {detailUpcoming.episodes && <span style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:6, background:BG4, color:MT, border:`1px solid ${BD}` }}>{detailUpcoming.episodes} eps</span>}
-                {detailUpcoming.genres?.slice(0, 3).map((g) => <span key={g} style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:6, background:BG4, color:MT, border:`1px solid ${BD}` }}>{g}</span>)}
-              </div>
-              {detailUpcoming.studios?.[0] && <div style={{ fontSize:12, color:MT, marginBottom:12 }}>Studio: {detailUpcoming.studios[0]}</div>}
-              <div style={{ fontSize:13, lineHeight:1.65, color:MT, marginBottom:20 }}>{detailUpcoming.synopsis || "No synopsis yet."}</div>
-              <div style={{ display:"flex", gap:8 }}>
-                <button style={{ flex:1, padding:13, borderRadius:10, border:`1px solid ${upcomingStars.includes(detailUpcoming.id) ? OR : BD}`, background: upcomingStars.includes(detailUpcoming.id) ? OR2 : BG3, color: upcomingStars.includes(detailUpcoming.id) ? OR : MT, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
-                  onClick={() => toggleStar(detailUpcoming.id)}>
-                  {upcomingStars.includes(detailUpcoming.id) ? "★ On your radar" : "☆ Add to radar"}
-                </button>
-                {detailUpcoming.mal_url && (
-                  <button style={{ flex:1.2, padding:13, borderRadius:10, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit", boxShadow:`0 6px 20px -4px rgba(255,107,26,.5)` }}
-                    onClick={() => openUrl(detailUpcoming.mal_url!)}>
-                    View on MAL
-                  </button>
-                )}
-              </div>
+      {loading ? (
+        [0,1,2,3,4].map((i) => (
+          <div key={i} style={{ display:"flex", gap:12, padding:12, background:BG2, border:`1px solid ${BD}`, borderRadius:14, marginBottom:8 }}>
+            <div className="anical-skel" style={{ width:44, height:44, borderRadius:"50%", flexShrink:0 }}/>
+            <div style={{ flex:1, display:"flex", flexDirection:"column", gap:7, justifyContent:"center" }}>
+              <div className="anical-skel" style={{ height:13, borderRadius:4, width:"60%" }}/>
+              <div className="anical-skel" style={{ height:10, borderRadius:4, width:"35%" }}/>
             </div>
           </div>
-        </>
+        ))
+      ) : filtered.length === 0 ? (
+        <div style={{ textAlign:"center", padding:"40px 20px", color:MT }}>
+          <div style={{ fontSize:48, marginBottom:12 }}>💬</div>
+          <div style={{ fontSize:15, fontWeight:700, marginBottom:6 }}>No discussions yet</div>
+          <div style={{ fontSize:12, color:MT2 }}>Open any anime and tap 💬 Community to start the first thread.</div>
+        </div>
+      ) : (
+        filtered.map((t, i) => {
+          const favMatch = favAnime.find((a) => a.id === t.anime_id);
+          return (
+            <div key={t.anime_id}
+              onClick={() => onOpenCommunity({ id:t.anime_id, title:t.anime_title, image_url: favMatch?.image_url ?? null })}
+              style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 14px", background:BG2, border:`1px solid ${BD}`, borderRadius:14, marginBottom:8, cursor:"pointer", animation:`cardIn .35s ${Math.min(i*30,300)}ms both`, transition:"transform .15s" }}
+              className="anical-card">
+              {favMatch?.image_url
+                ? <img src={favMatch.image_url} alt="" style={{ width:44, height:44, borderRadius:"50%", objectFit:"cover", flexShrink:0, border:`1px solid ${BD2}` }}/>
+                : <div style={{ width:44, height:44, borderRadius:"50%", background:`linear-gradient(135deg, #7c3aed, #4f46e5)`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>💬</div>}
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:700, color:TX, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{t.anime_title}</div>
+                <div style={{ fontSize:10, color:MT2, marginTop:2 }}>{formatNewsAge(t.last_post)} · {t.post_count} post{t.post_count === 1 ? "" : "s"}</div>
+              </div>
+              <div style={{ flexShrink:0, background:"rgba(139,92,246,.15)", border:"1px solid rgba(139,92,246,.3)", borderRadius:8, padding:"4px 9px", fontSize:11, fontWeight:800, color:"rgba(167,139,250,1)" }}>
+                {t.post_count}
+              </div>
+            </div>
+          );
+        })
+      )}
+
+      {/* Suggest starting threads for favorites */}
+      {!loading && favWithoutThreads.length > 0 && !search && (
+        <div style={{ marginTop:16 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontSize:11, fontWeight:700, color:MT2, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
+            <span>🌱</span><span>Start a thread</span>
+            <div style={{ flex:1, height:1, background:BD }}/>
+          </div>
+          {favWithoutThreads.slice(0, 4).map((a, i) => (
+            <div key={a.id}
+              onClick={() => onOpenCommunity(a)}
+              style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:BG2, border:`1px solid ${BD}`, borderRadius:12, marginBottom:6, cursor:"pointer", animation:`cardIn .3s ${i*30}ms both` }}
+              className="anical-card">
+              {a.image_url
+                ? <img src={a.image_url} alt="" style={{ width:36, height:36, borderRadius:8, objectFit:"cover", flexShrink:0 }}/>
+                : <div style={{ width:36, height:36, borderRadius:8, background:BG4, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>🎬</div>}
+              <div style={{ flex:1, fontSize:13, fontWeight:600, color:MT }}>{a.title}</div>
+              <div style={{ fontSize:11, color:MT2 }}>Be first →</div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -1480,13 +1666,13 @@ function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, 
 }
 
 // ── Bottom nav ─────────────────────────────────────────────────────────────────
-function BottomNav({ view, setView, favCount }: { view: string; setView: (v: "schedule"|"month"|"upcoming"|"news"|"stats") => void; favCount: number }) {
-  const tabs: { id: "schedule"|"month"|"upcoming"|"news"|"stats"; emoji: string; label: string }[] = [
-    { id:"schedule", emoji:"📋", label:"Schedule" },
-    { id:"month",    emoji:"📅", label:"Calendar" },
-    { id:"upcoming", emoji:"🔜", label:"Upcoming" },
-    { id:"news",     emoji:"📰", label:"News"     },
-    { id:"stats",    emoji:"⭐", label:"My List"  },
+function BottomNav({ view, setView, favCount }: { view: string; setView: (v: "schedule"|"month"|"community"|"news"|"stats") => void; favCount: number }) {
+  const tabs: { id: "schedule"|"month"|"community"|"news"|"stats"; emoji: string; label: string }[] = [
+    { id:"schedule",  emoji:"📋", label:"Schedule"  },
+    { id:"month",     emoji:"📅", label:"Calendar"  },
+    { id:"community", emoji:"💬", label:"Community" },
+    { id:"news",      emoji:"📰", label:"News"      },
+    { id:"stats",     emoji:"⭐", label:"My List"   },
   ];
   return (
     <nav className="anical-bottom-nav" style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, zIndex:100, background:`rgba(9,9,15,0.92)`, backdropFilter:"blur(24px) saturate(1.4)", borderTop:`1px solid rgba(37,37,51,0.8)`, display:"flex" } as React.CSSProperties}>
@@ -1532,7 +1718,7 @@ export default function AniCal() {
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadMsg, setLoadMsg] = useState("Starting up…");
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"schedule"|"month"|"upcoming"|"news"|"stats">("schedule");
+  const [view, setView] = useState<"schedule"|"month"|"community"|"news"|"stats">("schedule");
   const [selectedDay, setSelectedDay] = useState(todayDayIdx);
   const [monthOffset, setMonthOffset] = useState(0);
   const [favs, setFavs] = useState<number[]>([]);
@@ -1879,10 +2065,11 @@ export default function AniCal() {
                 onOpen={setDetailAnime}
                 onToggleFav={toggleFav}
                 todayDayIdx={todayDayIdx}
+                onOpenCommunity={(a) => { setCommunityAnime(a); }}
               />
             )}
-            {view === "upcoming" && (
-              <UpcomingView/>
+            {view === "community" && (
+              <CommunityView favAnime={favAnime} onOpenCommunity={(a) => setCommunityAnime(a)}/>
             )}
             {view === "news" && (
               <NewsView favAnime={favAnime}/>
