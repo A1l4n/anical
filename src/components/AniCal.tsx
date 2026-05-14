@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { Capacitor } from "@capacitor/core";
 import * as notif from "@/lib/notifications";
 import type { ScheduleEntry } from "@/lib/notifications";
+
+const IS_NATIVE = Capacitor.isNativePlatform(); // true on Android & iOS
+
+function openUrl(url: string) {
+  // '_system' routes through the OS intent/universal-link handler so the
+  // Crunchyroll app opens automatically if it's installed on the device.
+  window.open(url, IS_NATIVE ? "_system" : "_blank");
+}
 
 // ── Constants ───────────────────────────────────────────────────────────────
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] as const;
@@ -460,7 +469,7 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, tz }: { anime: An
             <button style={S.sheetFavBtn(isFav)} onClick={() => onToggleFav(anime.id)}>
               {isFav ? "★ Favorited" : "☆ Add to Favorites"}
             </button>
-            <button style={S.sheetCrBtn} onClick={() => window.open(`https://www.crunchyroll.com/search?q=${encodeURIComponent(anime.title)}`, "_blank")}>
+            <button style={S.sheetCrBtn} onClick={() => openUrl(`https://www.crunchyroll.com/search?q=${encodeURIComponent(anime.title)}`)}>
               ▶ Crunchyroll
             </button>
           </div>
@@ -835,18 +844,20 @@ function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, 
         ))
       )}
 
-      <div style={{ marginTop:28, padding:"18px 16px", background:`linear-gradient(135deg, ${BG2}, ${BG3})`, border:`1px solid ${BD2}`, borderRadius:16, position:"relative", overflow:"hidden" }}>
-        <div style={{ position:"absolute", top:-40, right:-30, fontSize:120, opacity:.05, transform:"rotate(15deg)" }}>📱</div>
-        <div style={{ position:"relative" }}>
-          <div style={{ fontSize:11, fontWeight:700, color:OR, letterSpacing:"1px", textTransform:"uppercase", marginBottom:6 }}>Pro tip</div>
-          <div style={{ fontSize:16, fontWeight:800, marginBottom:6, letterSpacing:"-.3px" }}>Take AniCal everywhere</div>
-          <div style={{ fontSize:12, color:MT, lineHeight:1.6, marginBottom:14 }}>Install to your home screen or grab the browser extension for one-click access from any tab.</div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            <button style={S.installBtn} onClick={installPwa}>📱 Install app</button>
-            <button style={S.ghostBtn} onClick={downloadExtension}>🧩 Extension</button>
+      {!IS_NATIVE && (
+        <div style={{ marginTop:28, padding:"18px 16px", background:`linear-gradient(135deg, ${BG2}, ${BG3})`, border:`1px solid ${BD2}`, borderRadius:16, position:"relative", overflow:"hidden" }}>
+          <div style={{ position:"absolute", top:-40, right:-30, fontSize:120, opacity:.05, transform:"rotate(15deg)" }}>📱</div>
+          <div style={{ position:"relative" }}>
+            <div style={{ fontSize:11, fontWeight:700, color:OR, letterSpacing:"1px", textTransform:"uppercase", marginBottom:6 }}>Pro tip</div>
+            <div style={{ fontSize:16, fontWeight:800, marginBottom:6, letterSpacing:"-.3px" }}>Take AniCal everywhere</div>
+            <div style={{ fontSize:12, color:MT, lineHeight:1.6, marginBottom:14 }}>Install to your home screen or grab the browser extension for one-click access from any tab.</div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              <button style={S.installBtn} onClick={installPwa}>📱 Install app</button>
+              <button style={S.ghostBtn} onClick={downloadExtension}>🧩 Extension</button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
