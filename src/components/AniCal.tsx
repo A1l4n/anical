@@ -56,28 +56,6 @@ type NotifSettings = { enabled: boolean; leadMinutes: number; perAnime: Record<n
 
 const DEFAULT_NOTIF: NotifSettings = { enabled: false, leadMinutes: 10, perAnime: {} };
 
-// ── Timezone presets ───────────────────────────────────────────────────────────
-const TZ_PRESETS: { label: string; tz: string }[] = [
-  { label: "🌐 Auto (device)", tz: "auto" },
-  { label: "🇯🇵 Japan (JST)", tz: "Asia/Tokyo" },
-  { label: "🇺🇸 US East (NY)", tz: "America/New_York" },
-  { label: "🇺🇸 US Central", tz: "America/Chicago" },
-  { label: "🇺🇸 US West (LA)", tz: "America/Los_Angeles" },
-  { label: "🇬🇧 UK (London)", tz: "Europe/London" },
-  { label: "🇩🇪 CET (Berlin)", tz: "Europe/Berlin" },
-  { label: "🇪🇸 Madrid", tz: "Europe/Madrid" },
-  { label: "🇮🇳 India (IST)", tz: "Asia/Kolkata" },
-  { label: "🇮🇩 Jakarta (WIB)", tz: "Asia/Jakarta" },
-  { label: "🇸🇬 Singapore", tz: "Asia/Singapore" },
-  { label: "🇵🇭 Manila", tz: "Asia/Manila" },
-  { label: "🇰🇷 Seoul (KST)", tz: "Asia/Seoul" },
-  { label: "🇨🇳 Shanghai", tz: "Asia/Shanghai" },
-  { label: "🇹🇭 Bangkok", tz: "Asia/Bangkok" },
-  { label: "🇦🇺 Sydney", tz: "Australia/Sydney" },
-  { label: "🇧🇷 São Paulo", tz: "America/Sao_Paulo" },
-  { label: "🇲🇽 Mexico City", tz: "America/Mexico_City" },
-  { label: "🇦🇪 Dubai", tz: "Asia/Dubai" },
-];
 
 // ── Utilities ──────────────────────────────────────────────────────────────────
 function getDeviceTz(): string {
@@ -232,7 +210,7 @@ function Splash({ fadingOut }: { fadingOut: boolean }) {
           </svg>
         </div>
       </div>
-      <div style={{ marginTop:32, fontSize:30, fontWeight:800, letterSpacing:"-.5px", animation:"wordmark .9s .35s cubic-bezier(.2,.7,.2,1) both" }}>
+      <div style={{ marginTop:32, fontSize:30, fontWeight:800, letterSpacing:"-.5px", color:TX, animation:"wordmark .9s .35s cubic-bezier(.2,.7,.2,1) both" }}>
         Ani<span style={{ color:OR }}>Cal</span>
       </div>
       <div style={{ marginTop:8, fontSize:11, color:MT, letterSpacing:"3px", textTransform:"uppercase", animation:"fadeIn .5s .8s both" }}>
@@ -684,48 +662,55 @@ function FavCard({ anime, delay, tz, notifEnabled, perAnimeNotif, toggleAnimeNot
   void tick;
   const next: Date | null = anime.__next;
   const now = new Date();
-  const isLive = next && next.getTime() - now.getTime() < 0 && now.getTime() - next.getTime() < 30 * 60_000;
+  const diffMs = next ? next.getTime() - now.getTime() : null;
+  const isLive = diffMs !== null && diffMs < 0 && diffMs > -30 * 60_000;
+  const isSoon = diffMs !== null && diffMs > 0 && diffMs < 12 * 3600_000;
   const countdown = next ? formatCountdown(next, now) : null;
   const localTime = jstToLocal(anime.broadcast_time, tz);
+  const dayLabel = anime.broadcast_day ? (DAY_SHORT[DAYS.indexOf(anime.broadcast_day as any)] || anime.broadcast_day.slice(0, 3)) : null;
+
+  const accentColor = isLive ? GR : isSoon ? OR : BD;
+  const cardBg = isLive ? "rgba(34,197,94,.07)" : isSoon ? OR2 : BG2;
+  const cardBorder = isLive ? "rgba(34,197,94,.35)" : isSoon ? OR3 : BD;
+
   return (
-    <div onClick={() => onOpen(anime)} style={{ position:"relative", display:"flex", gap:12, padding:10, background: isLive ? "rgba(34,197,94,.07)" : BG2, border:`1px solid ${isLive ? "rgba(34,197,94,.35)" : BD}`, borderRadius:14, cursor:"pointer", overflow:"hidden", animation:`cardIn .35s ${Math.min(delay, 360)}ms both` }}>
-      {isLive && <div className="anical-pulse" style={{ position:"absolute", top:10, right:10, width:7, height:7, borderRadius:"50%", background:GR }}/>}
-      <div style={{ position:"relative", flexShrink:0, width:64, height:88, borderRadius:10, overflow:"hidden", background:BG4 }}>
+    <div onClick={() => onOpen(anime)} style={{ position:"relative", display:"flex", gap:12, padding:12, background:cardBg, border:`1px solid ${cardBorder}`, borderRadius:14, cursor:"pointer", overflow:"hidden", animation:`cardIn .35s ${Math.min(delay, 360)}ms both` }}>
+      {/* Timing accent bar at top */}
+      <div style={{ position:"absolute", top:0, left:0, right:0, height:2, background: accentColor, opacity: isLive || isSoon ? 1 : 0 }}/>
+      {isLive && <div className="anical-pulse" style={{ position:"absolute", top:12, right:12, width:7, height:7, borderRadius:"50%", background:GR }}/>}
+      <div style={{ position:"relative", flexShrink:0, width:68, height:92, borderRadius:10, overflow:"hidden", background:BG4 }}>
         {anime.image_url
           ? <img src={anime.image_url} alt="" loading="lazy" style={{ width:"100%", height:"100%", objectFit:"cover" }}/>
           : <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>🎬</div>}
-        <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, transparent 50%, rgba(0,0,0,.7))" }}/>
+        <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, transparent 50%, rgba(0,0,0,.75))" }}/>
         {anime.score && <div style={{ position:"absolute", bottom:4, left:4, right:4, fontSize:10, fontWeight:800, color:"#fff", textAlign:"center" }}>★ {anime.score}</div>}
       </div>
       <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", justifyContent:"space-between", padding:"2px 0" }}>
         <div>
-          <div style={{ fontSize:14, fontWeight:700, lineHeight:1.25, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, marginBottom:4 }}>{anime.title}</div>
-          <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center" }}>
+          <div style={{ fontSize:14, fontWeight:700, lineHeight:1.25, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, marginBottom:6 }}>{anime.title}</div>
+          <div style={{ display:"flex", gap:5, flexWrap:"wrap" as const, alignItems:"center" }}>
             {countdown && (
-              <span style={{ fontSize:11, fontWeight:800, padding:"2px 8px", borderRadius:99, background: isLive ? "rgba(34,197,94,.15)" : OR2, color: isLive ? GR : OR, border:`1px solid ${isLive ? "rgba(34,197,94,.35)" : OR3}`, letterSpacing:".2px", textTransform: isLive ? "uppercase" : "none" }}>
-                {isLive ? "● LIVE" : countdown}
+              <span style={{ fontSize:11, fontWeight:800, padding:"3px 9px", borderRadius:99, background: isLive ? "rgba(34,197,94,.18)" : isSoon ? OR2 : BG3, color: isLive ? GR : isSoon ? OR : MT, border:`1px solid ${isLive ? "rgba(34,197,94,.4)" : isSoon ? OR3 : BD}`, letterSpacing:".2px" }}>
+                {isLive ? "● LIVE NOW" : countdown}
               </span>
             )}
-            {anime.broadcast_day && (
-              <span style={{ fontSize:10, color:MT, fontWeight:600, textTransform:"uppercase", letterSpacing:".4px" }}>
-                {DAY_SHORT[DAYS.indexOf(anime.broadcast_day as any)] || anime.broadcast_day.slice(0, 3)}
-              </span>
-            )}
-            {anime.genres?.[0] && <span style={{ fontSize:10, color:MT, padding:"2px 7px", borderRadius:99, background:BG3, border:`1px solid ${BD}` }}>{anime.genres[0]}</span>}
+            {dayLabel && <span style={{ fontSize:10, color:MT, fontWeight:700, textTransform:"uppercase", letterSpacing:".6px", padding:"3px 7px", borderRadius:6, background:BG3, border:`1px solid ${BD}` }}>{dayLabel}</span>}
+            {anime.genres?.[0] && <span style={{ fontSize:10, color:MT, padding:"3px 7px", borderRadius:6, background:BG3, border:`1px solid ${BD}` }}>{anime.genres[0]}</span>}
           </div>
         </div>
         {anime.broadcast_time && (
-          <div style={{ fontSize:11, color:MT, fontWeight:600, marginTop:6 }}>
-            <span style={{ color:OR }}>{localTime}</span>
-            <span style={{ color:MT2 }}> · {anime.broadcast_time} JST</span>
+          <div style={{ fontSize:11, fontWeight:600, marginTop:8, display:"flex", alignItems:"center", gap:4 }}>
+            <span style={{ color:OR, fontWeight:700 }}>{localTime}</span>
+            <span style={{ color:MT2 }}>· {anime.broadcast_time} JST</span>
+            {anime.episodes && <span style={{ color:MT2 }}>· {anime.episodes} eps</span>}
           </div>
         )}
       </div>
-      <div style={{ display:"flex", flexDirection:"column", gap:4, alignItems:"center" }}>
-        <button onClick={(e) => { e.stopPropagation(); toggleAnimeNotif(); }} style={{ background: notifEnabled && perAnimeNotif ? OR2 : "none", border:`1px solid ${notifEnabled && perAnimeNotif ? OR3 : BD}`, color: notifEnabled && perAnimeNotif ? OR : MT2, fontSize:14, cursor:"pointer", fontFamily:"inherit", padding:"4px 6px", lineHeight:1, borderRadius:8, opacity: notifEnabled ? 1 : .5 }}>
+      <div style={{ display:"flex", flexDirection:"column", gap:6, alignItems:"center", paddingTop:2 }}>
+        <button onClick={(e) => { e.stopPropagation(); toggleAnimeNotif(); }} style={{ background: notifEnabled && perAnimeNotif ? OR2 : "none", border:`1px solid ${notifEnabled && perAnimeNotif ? OR3 : BD}`, color: notifEnabled && perAnimeNotif ? OR : MT2, fontSize:14, cursor:"pointer", fontFamily:"inherit", padding:"5px 7px", lineHeight:1, borderRadius:8, opacity: notifEnabled ? 1 : .4 }}>
           {perAnimeNotif ? "🔔" : "🔕"}
         </button>
-        <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ background:"none", border:"none", color:MT2, fontSize:18, cursor:"pointer", fontFamily:"inherit", padding:"2px 6px", lineHeight:1 }}>✕</button>
+        <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ background:"none", border:`1px solid ${BD}`, color:MT2, fontSize:13, cursor:"pointer", fontFamily:"inherit", padding:"4px 7px", lineHeight:1, borderRadius:8 }}>✕</button>
       </div>
     </div>
   );
@@ -740,6 +725,9 @@ function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, 
       if (!a.__next) return 1; if (!b.__next) return -1;
       return a.__next.getTime() - b.__next.getTime();
     });
+
+  const myTodayCount = favAnime.filter((a: any) => a.dayIdx === todayDayIdx).length;
+  const myPerDay = DAYS.map((_, i) => favAnime.filter((a: any) => a.dayIdx === i).length);
 
   const buckets: Record<string, any[]> = { live:[], soon:[], today:[], week:[], later:[], unknown:[] };
   for (const a of withNext) {
@@ -766,58 +754,89 @@ function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, 
 
   return (
     <div style={{ padding:"4px 16px 24px" }}>
-      <div style={{ position:"relative", overflow:"hidden", background:`linear-gradient(135deg, ${OR} 0%, #b84c0f 100%)`, borderRadius:18, padding:"20px 18px", marginBottom:16, boxShadow:`0 16px 40px -12px rgba(255,107,26,.5)` }}>
+      {/* Hero */}
+      <div style={{ position:"relative", overflow:"hidden", background:`linear-gradient(135deg, ${OR} 0%, #b84c0f 100%)`, borderRadius:18, padding:"20px 18px", marginBottom:14, boxShadow:`0 16px 40px -12px rgba(255,107,26,.5)` }}>
         <div style={{ position:"absolute", top:-30, right:-30, width:140, height:140, borderRadius:"50%", background:"rgba(255,255,255,.1)" }}/>
         <div style={{ position:"absolute", bottom:-50, right:30, width:90, height:90, borderRadius:"50%", background:"rgba(255,255,255,.07)" }}/>
         <div style={{ position:"relative" }}>
-          <div style={{ fontSize:11, fontWeight:700, color:"rgba(255,255,255,.8)", letterSpacing:"1px", textTransform:"uppercase", marginBottom:4 }}>Your collection</div>
-          <div style={{ fontSize:42, fontWeight:900, color:"#fff", lineHeight:1, letterSpacing:"-1.5px" }}>
-            {favs.length}<span style={{ fontSize:18, fontWeight:700, opacity:.7, marginLeft:6 }}>shows</span>
+          <div style={{ fontSize:11, fontWeight:700, color:"rgba(255,255,255,.75)", letterSpacing:"1.2px", textTransform:"uppercase", marginBottom:4 }}>My Watchlist</div>
+          <div style={{ fontSize:46, fontWeight:900, color:"#fff", lineHeight:1, letterSpacing:"-2px" }}>
+            {favs.length}<span style={{ fontSize:18, fontWeight:700, opacity:.75, marginLeft:8 }}>shows</span>
           </div>
-          <div style={{ fontSize:13, color:"rgba(255,255,255,.85)", marginTop:6 }}>
+          <div style={{ fontSize:13, color:"rgba(255,255,255,.9)", marginTop:8, fontWeight:500 }}>
             {buckets.live.length > 0 ? `🔴 ${buckets.live.length} airing right now`
-              : buckets.soon.length > 0 ? `⏰ ${buckets.soon.length} in the next 12 hours`
-              : favAnime.filter((a: any) => a.dayIdx === todayDayIdx).length > 0 ? `📡 ${favAnime.filter((a: any) => a.dayIdx === todayDayIdx).length} airing today`
-              : "No favorites airing today"}
+              : buckets.soon.length > 0 ? `⏰ ${buckets.soon.length} up in the next 12 hours`
+              : myTodayCount > 0 ? `📡 ${myTodayCount} of your shows air today`
+              : favs.length > 0 ? "Nothing from your list airs today"
+              : "Add shows to start tracking them"}
           </div>
         </div>
       </div>
 
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:18 }}>
-        {[{ v:totalAnime, l:"Season", icon:"📺" }, { v:airingToday, l:"Today", icon:"📡" }, { v:topGenre, l:"Top genre", icon:"🎭", small:true }].map((stat, i) => (
-          <div key={i} style={{ background:BG2, border:`1px solid ${BD}`, borderRadius:14, padding:"12px 10px", display:"flex", flexDirection:"column", gap:4 }}>
-            <div style={{ fontSize:14, opacity:.7 }}>{stat.icon}</div>
-            <div style={{ fontSize: stat.small ? 13 : 22, fontWeight:800, color:TX, lineHeight:1.1, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{stat.v}</div>
-            <div style={{ fontSize:10, color:MT, fontWeight:600, textTransform:"uppercase", letterSpacing:".5px" }}>{stat.l}</div>
+      {/* Personal stats — all user-specific */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:10 }}>
+        {[
+          { v: favs.length,                                              l:"Tracking",  icon:"⭐" },
+          { v: myTodayCount > 0 ? myTodayCount : "–",                   l:"Today",     icon:"📡" },
+          { v: topGenre,                                                 l:"Top Genre", icon:"🎭", small: typeof topGenre === "string" && topGenre.length > 6 },
+        ].map((stat, i) => (
+          <div key={i} style={{ background:BG2, border:`1px solid ${BD}`, borderRadius:14, padding:"14px 10px", display:"flex", flexDirection:"column", gap:4 }}>
+            <div style={{ fontSize:16, opacity:.65 }}>{stat.icon}</div>
+            <div style={{ fontSize: stat.small ? 13 : 24, fontWeight:800, color:TX, lineHeight:1.1, whiteSpace:"nowrap" as const, overflow:"hidden", textOverflow:"ellipsis" }}>{stat.v}</div>
+            <div style={{ fontSize:10, color:MT, fontWeight:600, textTransform:"uppercase" as const, letterSpacing:".5px" }}>{stat.l}</div>
           </div>
         ))}
+      </div>
+
+      {/* Weekly activity strip */}
+      <div style={{ display:"flex", gap:4, marginBottom:10 }}>
+        {DAYS.map((d, i) => {
+          const count = myPerDay[i];
+          const isToday = i === todayDayIdx;
+          return (
+            <div key={d} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:3, padding:"7px 2px", borderRadius:10, background: isToday ? OR2 : count > 0 ? BG3 : BG2, border:`1px solid ${isToday ? OR3 : count > 0 ? BD2 : "transparent"}`, transition:"background .2s" }}>
+              <div style={{ fontSize:8, fontWeight:800, color:isToday ? OR : MT, textTransform:"uppercase" as const, letterSpacing:".5px" }}>{DAY_SHORT[i].slice(0,2)}</div>
+              <div style={{ fontSize:count > 0 ? 15 : 11, fontWeight:800, color:count > 0 ? (isToday ? OR : TX) : MT2, lineHeight:1 }}>{count > 0 ? count : "·"}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Global season context */}
+      <div style={{ textAlign:"center", fontSize:11, color:MT2, marginBottom:18, padding:"6px 0", borderBottom:`1px solid ${BD}` }}>
+        {totalAnime} shows in the current season · {airingToday} airing today
       </div>
 
       {favAnime.length > 0 && (
         <NotifBanner notifPerm={notifPerm} notifEnabled={notifEnabled} notifSettings={notifSettings} setNotifSettings={setNotifSettings} requestNotifPerm={requestNotifPerm} testNotif={testNotif}/>
       )}
 
-      <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginTop:18, marginBottom:10 }}>
-        <div style={{ fontSize:18, fontWeight:800, letterSpacing:"-.3px" }}>My Watchlist</div>
+      <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginTop:20, marginBottom:12 }}>
+        <div style={{ fontSize:17, fontWeight:800, letterSpacing:"-.3px" }}>Watchlist</div>
         {favAnime.length > 0 && <div style={{ fontSize:11, color:MT2, fontWeight:600 }}>{favAnime.length} title{favAnime.length===1?"":"s"}</div>}
       </div>
 
       {favAnime.length === 0 ? (
-        <div style={{ padding:"40px 20px", textAlign:"center", borderRadius:14, border:`2px dashed ${BD2}`, background:BG2 }}>
-          <div style={{ fontSize:48, marginBottom:8 }}>⭐</div>
-          <div style={{ fontSize:14, fontWeight:700, marginBottom:4 }}>Build your watchlist</div>
-          <div style={{ fontSize:12, color:MT, lineHeight:1.6 }}>Tap ☆ on any anime to track it here.<br/>You'll see countdowns and can get notified when it airs.</div>
+        <div style={{ padding:"40px 20px", textAlign:"center", borderRadius:18, background:`linear-gradient(145deg, ${BG2}, ${BG3})`, border:`1px solid ${BD}` }}>
+          <div style={{ fontSize:52, marginBottom:12 }}>⭐</div>
+          <div style={{ fontSize:16, fontWeight:800, marginBottom:8 }}>Your watchlist is empty</div>
+          <div style={{ fontSize:13, color:MT, lineHeight:1.65, marginBottom:16 }}>
+            Tap <span style={{ color:OR, fontWeight:700 }}>☆</span> on any anime in the Schedule<br/>to start tracking it here.
+          </div>
+          <div style={{ padding:"10px 14px", background:OR2, border:`1px solid ${OR3}`, borderRadius:12, fontSize:12, color:OR, fontWeight:600, lineHeight:1.5 }}>
+            You'll see live countdowns and can get notified when your shows air.
+          </div>
         </div>
       ) : (
         sections.filter((sec) => sec.items.length > 0).map((sec) => (
-          <div key={sec.key} style={{ marginBottom:18 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontSize:12, fontWeight:700, color: sec.accent ? OR : MT, textTransform:"uppercase", letterSpacing:".8px" }}>
+          <div key={sec.key} style={{ marginBottom:20 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontSize:12, fontWeight:700, color: sec.accent ? OR : MT, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
               <span style={{ fontSize:14 }}>{sec.emoji}</span>
               <span>{sec.title}</span>
               <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background: sec.accent ? OR2 : BG3, border:`1px solid ${sec.accent ? OR3 : BD}`, color: sec.accent ? OR : MT }}>{sec.items.length}</span>
               <div style={{ flex:1, height:1, background:BD }}/>
             </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr", gap:10 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr", gap:8 }}>
               {sec.items.map((a: any, i: number) => (
                 <FavCard key={a.id} anime={a} delay={i * 30} tz={tz} notifEnabled={notifEnabled}
                   perAnimeNotif={notifSettings.perAnime[a.id] !== false}
@@ -833,10 +852,10 @@ function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, 
         <div style={{ marginTop:28, padding:"18px 16px", background:`linear-gradient(135deg, ${BG2}, ${BG3})`, border:`1px solid ${BD2}`, borderRadius:16, position:"relative", overflow:"hidden" }}>
           <div style={{ position:"absolute", top:-40, right:-30, fontSize:120, opacity:.05, transform:"rotate(15deg)" }}>📱</div>
           <div style={{ position:"relative" }}>
-            <div style={{ fontSize:11, fontWeight:700, color:OR, letterSpacing:"1px", textTransform:"uppercase", marginBottom:6 }}>Pro tip</div>
+            <div style={{ fontSize:11, fontWeight:700, color:OR, letterSpacing:"1px", textTransform:"uppercase" as const, marginBottom:6 }}>Pro tip</div>
             <div style={{ fontSize:16, fontWeight:800, marginBottom:6, letterSpacing:"-.3px" }}>Take AniCal everywhere</div>
             <div style={{ fontSize:12, color:MT, lineHeight:1.6, marginBottom:14 }}>Install to your home screen or grab the browser extension for one-click access from any tab.</div>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" as const }}>
               <button style={{ background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", border:"none", borderRadius:99, padding:"10px 16px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit", boxShadow:`0 6px 20px -4px rgba(255,107,26,.5)` }} onClick={installPwa}>📱 Install app</button>
               <button style={{ background:BG3, color:TX, border:`1px solid ${BD}`, borderRadius:99, padding:"10px 16px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }} onClick={downloadExtension}>🧩 Extension</button>
             </div>
@@ -908,7 +927,7 @@ export default function AniCal() {
   const [toast, setToast] = useState({ show: false, msg: "" });
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
-  const [tz, setTz] = useState<string>("auto");
+  const tz = "auto";
   const [notifSettings, setNotifSettings] = useState<NotifSettings>(DEFAULT_NOTIF);
   const [notifPerm, setNotifPerm] = useState<"granted"|"denied"|"default"|"unsupported">("default");
   const [tick, setTick] = useState(0);
@@ -937,8 +956,6 @@ export default function AniCal() {
   // ── Persistence ──
   useEffect(() => { setFavs(LS.get<number[]>("anical_favs", [])); }, []);
   useEffect(() => { LS.set("anical_favs", favs); }, [favs]);
-  useEffect(() => { setTz(LS.get<string>("anical_tz", "auto")); }, []);
-  useEffect(() => { LS.set("anical_tz", tz); }, [tz]);
   useEffect(() => { setNotifSettings(LS.get<NotifSettings>("anical_notif", DEFAULT_NOTIF)); }, []);
   useEffect(() => { LS.set("anical_notif", notifSettings); }, [notifSettings]);
 
@@ -1165,13 +1182,13 @@ export default function AniCal() {
             />
           </div>
 
-          {/* TZ + last updated */}
+          {/* Auto timezone + last updated */}
           {lastUpdated && (
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"8px 16px 0" }}>
-              <select value={tz} onChange={(e) => setTz(e.target.value)}
-                style={{ background:BG3, color:TX, border:`1px solid ${BD}`, borderRadius:6, fontSize:11, padding:"4px 6px", fontFamily:"inherit", maxWidth:180 }}>
-                {TZ_PRESETS.map((p) => <option key={p.tz} value={p.tz}>{p.label}{p.tz === "auto" ? ` · ${getDeviceTz()}` : ""}</option>)}
-              </select>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"6px 16px 0" }}>
+              <div style={{ fontSize:10, color:MT, display:"flex", alignItems:"center", gap:4 }}>
+                <span>🌐</span>
+                <span>{getDeviceTz().replace(/_/g, " ")}</span>
+              </div>
               <div style={{ fontSize:10, color:MT2 }}>Updated {lastUpdated.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}</div>
             </div>
           )}
@@ -1242,3 +1259,4 @@ export default function AniCal() {
     </>
   );
 }
+
