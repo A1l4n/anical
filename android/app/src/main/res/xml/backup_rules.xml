@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Back up favorites, timezone, and notification settings -->
+    <include domain="sharedpref" path="." />
+    <exclude domain="sharedpref" path="WebViewChromiumPrefs.xml" />
+</full-backup-content>

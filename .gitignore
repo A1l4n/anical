@@ -20,6 +20,10 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Signing secrets — never commit
+keystore.properties
+*.keystore
+
 # Android build artifacts
 android/.gradle/
 android/app/build/
