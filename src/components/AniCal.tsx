@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Capacitor } from "@capacitor/core";
-import { Haptics, ImpactStyle } from "@capacitor/haptics";
 import * as notif from "@/lib/notifications";
 import type { ScheduleEntry } from "@/lib/notifications";
 
@@ -10,9 +9,13 @@ function openUrl(url: string) {
   window.open(url, IS_NATIVE ? "_system" : "_blank");
 }
 
+// Dynamic import so haptics never blocks app startup or crashes the bridge
 async function haptic() {
   if (!IS_NATIVE) return;
-  try { await Haptics.impact({ style: ImpactStyle.Light }); } catch {}
+  try {
+    const { Haptics, ImpactStyle } = await import("@capacitor/haptics");
+    await Haptics.impact({ style: ImpactStyle.Light });
+  } catch {}
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -455,6 +458,7 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
   };
 
   const onTouchEnd = (e: React.TouchEvent) => {
+    if (e.changedTouches.length === 0) return;
     const dx = e.changedTouches[0].clientX - swipeStartX.current;
     const dy = e.changedTouches[0].clientY - swipeStartY.current;
     if (Math.abs(dx) > Math.abs(dy) + 20 && Math.abs(dx) > 60) {
@@ -1027,11 +1031,12 @@ export default function AniCal() {
 
   // ── Pull-to-refresh handlers ──
   const onTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 0) return;
     if (window.scrollY === 0) pullStartY.current = e.touches[0].clientY;
   }, []);
 
   const onTouchMove = useCallback((e: React.TouchEvent) => {
-    if (pullStartY.current === null) return;
+    if (pullStartY.current === null || e.touches.length === 0) return;
     if (window.scrollY > 0) { pullStartY.current = null; setPullVisible(false); return; }
     const dy = e.touches[0].clientY - pullStartY.current;
     pullCurrentY.current = dy;
