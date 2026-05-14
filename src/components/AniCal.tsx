@@ -718,46 +718,57 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
 // ── Notification banner ────────────────────────────────────────────────────────
 function NotifBanner({ notifPerm, notifEnabled, notifSettings, setNotifSettings, requestNotifPerm, testNotif }: any) {
   if (notifPerm === "unsupported") return null;
+  const denied = notifPerm === "denied";
+
+  const toggle = async () => {
+    if (notifEnabled) {
+      setNotifSettings((s: NotifSettings) => ({ ...s, enabled: false }));
+    } else if (!denied) {
+      const g = (await requestNotifPerm()) === "granted";
+      if (g) setNotifSettings((s: NotifSettings) => ({ ...s, enabled: true }));
+    }
+  };
+
   return (
-    <div style={{ background: notifEnabled ? "rgba(34,197,94,.08)" : OR2, border:`1px solid ${notifEnabled ? "rgba(34,197,94,.3)" : OR3}`, borderRadius:14, padding:"12px 14px", display:"flex", flexDirection:"column", gap:10 }}>
-      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-        <div style={{ fontSize:22 }}>{notifEnabled ? "🔔" : "🔕"}</div>
+    <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:12, overflow:"hidden" }}>
+      {/* Main row */}
+      <div style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 14px" }}>
+        <span style={{ fontSize:15, opacity: notifEnabled ? 1 : 0.4 }}>{notifEnabled ? "🔔" : "🔕"}</span>
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontSize:13, fontWeight:700, color: notifEnabled ? GR : OR }}>
-            {notifEnabled ? "Notifications on" : "Get notified when anime airs"}
-          </div>
-          <div style={{ fontSize:11, color:MT, marginTop:2 }}>
-            {notifEnabled
-              ? `Alert ${notifSettings.leadMinutes === 0 ? "at airtime" : `${notifSettings.leadMinutes} min before`}`
-              : notifPerm === "denied" ? "Notifications blocked. Enable in browser settings." : "Reminders for everything on your watchlist."}
-          </div>
+          <span style={{ fontSize:12, fontWeight:600, color: notifEnabled ? TX : MT, letterSpacing:".1px" }}>Notifications</span>
+          {notifEnabled && (
+            <span style={{ fontSize:10, color:MT2, marginLeft:8 }}>
+              {notifSettings.leadMinutes === 0 ? "at airtime" : `${notifSettings.leadMinutes} min before`}
+            </span>
+          )}
+          {denied && <span style={{ fontSize:10, color:MT2, marginLeft:8 }}>Blocked in browser settings</span>}
         </div>
-        {!notifEnabled && notifPerm !== "denied" && (
-          <button onClick={async () => { const g = (await requestNotifPerm()) === "granted"; if (g) setNotifSettings((s: NotifSettings) => ({ ...s, enabled: true })); }}
-            style={{ background:OR, color:"#fff", border:"none", borderRadius:8, padding:"7px 12px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
-            Turn on
-          </button>
-        )}
-        {notifEnabled && (
-          <button onClick={() => setNotifSettings((s: NotifSettings) => ({ ...s, enabled: false }))}
-            style={{ background:"none", color:MT, border:`1px solid ${BD}`, borderRadius:8, padding:"7px 10px", fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
-            Off
-          </button>
-        )}
+        {/* Toggle switch */}
+        <button
+          onClick={toggle}
+          disabled={denied}
+          style={{ position:"relative", width:38, height:22, borderRadius:11, border:"none", background: notifEnabled ? OR : "rgba(255,255,255,0.12)", cursor: denied ? "default" : "pointer", transition:"background .2s", padding:0, flexShrink:0 } as React.CSSProperties}
+        >
+          <span style={{ position:"absolute", top:3, left: notifEnabled ? 19 : 3, width:16, height:16, borderRadius:"50%", background:"#fff", transition:"left .2s", display:"block", boxShadow:"0 1px 4px rgba(0,0,0,.4)" } as React.CSSProperties}/>
+        </button>
       </div>
+
+      {/* Timing row — only when on */}
       {notifEnabled && (
-        <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
-          <span style={{ fontSize:10, color:MT, fontWeight:700, textTransform:"uppercase", letterSpacing:".5px", marginRight:4 }}>Alert</span>
+        <div style={{ borderTop:"1px solid rgba(255,255,255,0.06)", padding:"8px 14px", display:"flex", gap:5, alignItems:"center", overflowX:"auto" } as React.CSSProperties}>
           {LEAD_OPTIONS.map((m) => {
             const sel = notifSettings.leadMinutes === m;
             return (
               <button key={m} onClick={() => setNotifSettings((s: NotifSettings) => ({ ...s, leadMinutes: m }))}
-                style={{ fontSize:11, fontWeight:700, padding:"4px 9px", borderRadius:99, background: sel ? OR : BG3, border:`1px solid ${sel ? OR : BD}`, color: sel ? "#fff" : MT, cursor:"pointer", fontFamily:"inherit" }}>
+                style={{ fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:99, whiteSpace:"nowrap", background: sel ? OR : "transparent", border:`1px solid ${sel ? OR : "rgba(255,255,255,0.1)"}`, color: sel ? "#fff" : MT2, cursor:"pointer", fontFamily:"inherit", transition:"all .15s", flexShrink:0 } as React.CSSProperties}>
                 {m === 0 ? "at airtime" : `${m}m before`}
               </button>
             );
           })}
-          <button onClick={testNotif} style={{ marginLeft:"auto", fontSize:11, fontWeight:600, padding:"4px 9px", borderRadius:99, background:"none", border:`1px solid ${BD}`, color:MT, cursor:"pointer", fontFamily:"inherit" }}>Test</button>
+          <button onClick={testNotif}
+            style={{ marginLeft:"auto", fontSize:10, fontWeight:600, padding:"3px 9px", borderRadius:99, background:"transparent", border:"1px solid rgba(255,255,255,0.1)", color:MT2, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap", flexShrink:0 } as React.CSSProperties}>
+            Test
+          </button>
         </div>
       )}
     </div>
