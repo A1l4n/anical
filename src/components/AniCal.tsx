@@ -16,6 +16,8 @@ const DAY_SHORT = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const LEAD_OPTIONS = [0, 5, 10, 15, 30, 60];
 const CACHE_TTL = 4 * 3600 * 1000;
+const NEWS_TTL     = 30 * 60 * 1000;
+const UPCOMING_TTL = 6  * 3600 * 1000;
 const PULL_THRESHOLD = 70;
 
 // ── Palette ────────────────────────────────────────────────────────────────────
@@ -53,6 +55,28 @@ type Anime = {
 type Schedule = Record<string, Anime[]>;
 type BootStage = "splash" | "loading" | "ready" | "error";
 type NotifSettings = { enabled: boolean; leadMinutes: number; perAnime: Record<number, boolean> };
+type NewsItem = {
+  id: string;
+  title: string;
+  date?: string;
+  excerpt?: string;
+  url: string;
+  source: "ANN" | "MAL";
+  imageUrl?: string;
+  animeTitle?: string;
+};
+type UpcomingAnime = {
+  id: number;
+  title: string;
+  imageUrl?: string | null;
+  season?: string | null;
+  year?: number | null;
+  genres?: string[];
+  episodes?: number | null;
+  synopsis?: string | null;
+  studios?: string[];
+  mal_url?: string | null;
+};
 
 const DEFAULT_NOTIF: NotifSettings = { enabled: false, leadMinutes: 10, perAnime: {} };
 
@@ -103,6 +127,84 @@ function formatCountdown(target: Date, now = new Date()): string {
   if (h < 24) return rem > 0 ? `in ${h}h ${rem}m` : `in ${h}h`;
   const d = Math.floor(h / 24);
   return d === 1 ? "tomorrow" : `in ${d} days`;
+}
+
+function formatNewsAge(dateStr?: string): string {
+  if (!dateStr) return "";
+  try {
+    const diffH = (Date.now() - new Date(dateStr).getTime()) / 3600_000;
+    if (diffH < 1) return "just now";
+    if (diffH < 24) return `${Math.floor(diffH)}h ago`;
+    const days = Math.floor(diffH / 24);
+    if (days < 7) return `${days}d ago`;
+    return new Date(dateStr).toLocaleDateString([], { month: "short", day: "numeric" });
+  } catch { return ""; }
+}
+
+async function fetchWithProxy(url: string): Promise<string> {
+  const proxies = [
+    `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://thingproxy.freeboard.io/fetch/${url}`,
+  ];
+  for (const proxy of proxies) {
+    try {
+      const r = await fetch(proxy, { signal: AbortSignal.timeout(8000) });
+      if (r.ok) return r.text();
+    } catch {}
+  }
+  throw new Error("All proxies failed");
+}
+
+async function fetchAnnNews(): Promise<NewsItem[]> {
+  const ann = "https://www.animenewsnetwork.com/news/rss.xml?ann-edition=us";
+  const text = await fetchWithProxy(ann);
+  const doc = new DOMParser().parseFromString(text, "text/xml");
+  return Array.from(doc.querySelectorAll("item")).slice(0, 30).map((el) => {
+    const raw = el.querySelector("description")?.textContent || "";
+    return {
+      id: el.querySelector("guid")?.textContent || Math.random().toString(),
+      title: el.querySelector("title")?.textContent?.trim() || "",
+      date: el.querySelector("pubDate")?.textContent || undefined,
+      excerpt: raw.replace(/<[^>]+>/g, "").trim().slice(0, 180) || undefined,
+      url: el.querySelector("link")?.textContent?.trim() || "",
+      source: "ANN" as const,
+    };
+  }).filter((n) => n.title && n.url);
+}
+
+async function fetchUpcoming(): Promise<UpcomingAnime[]> {
+  const res = await fetch("https://api.jikan.moe/v4/seasons/upcoming?limit=25");
+  if (!res.ok) return [];
+  const json = await res.json();
+  return (json.data || []).map((a: any) => ({
+    id: a.mal_id,
+    title: a.title_english || a.title || "Untitled",
+    imageUrl: a.images?.webp?.image_url || a.images?.jpg?.image_url || null,
+    season: a.season,
+    year: a.year,
+    genres: (a.genres || []).map((g: any) => g.name),
+    episodes: a.episodes,
+    synopsis: a.synopsis ? a.synopsis.slice(0, 200) : null,
+    studios: (a.studios || []).map((s: any) => s.name),
+    mal_url: a.url,
+  }));
+}
+
+async function fetchAnimeNewsItems(anime: Anime): Promise<NewsItem[]> {
+  const res = await fetch(`https://api.jikan.moe/v4/anime/${anime.id}/news?limit=4`);
+  if (!res.ok) return [];
+  const json = await res.json();
+  return (json.data || []).map((n: any) => ({
+    id: `mal-${n.mal_id}`,
+    title: n.title,
+    date: n.date,
+    excerpt: (n.excerpt || "").replace(/<[^>]+>/g, "").slice(0, 180),
+    url: n.url,
+    source: "MAL" as const,
+    imageUrl: n.images?.jpg?.image_url || null,
+    animeTitle: anime.title,
+  }));
 }
 
 async function fetchDay(day: string): Promise<Anime[]> {
@@ -657,6 +759,227 @@ function NotifBanner({ notifPerm, notifEnabled, notifSettings, setNotifSettings,
   );
 }
 
+// ── Upcoming card ─────────────────────────────────────────────────────────────
+function UpcomingCard({ anime, starred, onToggle, onOpen, delay = 0 }: { anime: UpcomingAnime; starred: boolean; onToggle: (id: number) => void; onOpen: (a: UpcomingAnime) => void; delay?: number }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const seasonLabel = [capitalize(anime.season), anime.year].filter(Boolean).join(" ");
+  return (
+    <div
+      className="anical-card"
+      onClick={() => onOpen(anime)}
+      style={{ display:"flex", gap:12, padding:12, background: starred ? `rgba(255,107,26,.07)` : BG2, border:`1px solid ${starred ? OR3 : BD}`, borderRadius:14, cursor:"pointer", overflow:"hidden", animation:`cardIn .4s ${delay}ms cubic-bezier(.2,.7,.2,1) both`, transition:"transform .15s", boxShadow: starred ? `0 4px 18px -6px ${OR3}` : "none" }}
+    >
+      <div style={{ position:"relative", flexShrink:0, width:60, height:84, borderRadius:8, overflow:"hidden", background:BG4 }}>
+        {anime.imageUrl && !imgFailed
+          ? <img src={anime.imageUrl} alt="" loading="lazy" style={{ width:"100%", height:"100%", objectFit:"cover" }} onError={() => setImgFailed(true)}/>
+          : <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, color:MT2 }}>🎬</div>}
+        <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, transparent 55%, rgba(0,0,0,.7))" }}/>
+      </div>
+      <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", justifyContent:"center", gap:5 }}>
+        <div style={{ fontSize:14, fontWeight:700, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const }}>{anime.title}</div>
+        <div style={{ display:"flex", gap:5, flexWrap:"wrap" as const, alignItems:"center" }}>
+          {seasonLabel && <span style={{ fontSize:10, fontWeight:700, padding:"2px 7px", borderRadius:6, background:OR2, color:OR, border:`1px solid ${OR3}` }}>{seasonLabel}</span>}
+          {anime.episodes && <span style={{ fontSize:10, color:MT, padding:"2px 7px", borderRadius:6, background:BG3, border:`1px solid ${BD}` }}>{anime.episodes} eps</span>}
+          {anime.genres?.[0] && <span style={{ fontSize:10, color:MT, padding:"2px 7px", borderRadius:6, background:BG3, border:`1px solid ${BD}` }}>{anime.genres[0]}</span>}
+        </div>
+        {anime.studios?.[0] && <div style={{ fontSize:10, color:MT2, fontWeight:600 }}>{anime.studios[0]}</div>}
+      </div>
+      <button
+        className="anical-favbtn"
+        onClick={(e) => { e.stopPropagation(); onToggle(anime.id); }}
+        style={{ flexShrink:0, alignSelf:"flex-start", background:"none", border:"none", cursor:"pointer", fontSize:22, padding:"2px 4px", lineHeight:1, color: starred ? OR : MT2, fontFamily:"inherit", transition:"color .15s" }}
+      >{starred ? "★" : "☆"}</button>
+    </div>
+  );
+}
+
+// ── News card ──────────────────────────────────────────────────────────────────
+function NewsCard({ item, delay = 0 }: { item: NewsItem; delay?: number }) {
+  const age = formatNewsAge(item.date);
+  return (
+    <div
+      className="anical-card"
+      onClick={() => openUrl(item.url)}
+      style={{ display:"flex", gap:10, padding:12, background:BG2, border:`1px solid ${BD}`, borderRadius:14, cursor:"pointer", marginBottom:8, overflow:"hidden", animation:`cardIn .4s ${delay}ms cubic-bezier(.2,.7,.2,1) both`, transition:"transform .15s" }}
+    >
+      {item.imageUrl && (
+        <img src={item.imageUrl} alt="" loading="lazy" style={{ width:68, height:68, borderRadius:8, objectFit:"cover", flexShrink:0, background:BG4 }}/>
+      )}
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:5, flexWrap:"wrap" as const }}>
+          <span style={{ fontSize:9, fontWeight:800, padding:"2px 6px", borderRadius:4, background:item.source==="ANN"?OR2:BG3, color:item.source==="ANN"?OR:MT, border:`1px solid ${item.source==="ANN"?OR3:BD}`, textTransform:"uppercase" as const, letterSpacing:".5px" }}>{item.source}</span>
+          {item.animeTitle && <span style={{ fontSize:10, color:OR, fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const, maxWidth:120 }}>{item.animeTitle}</span>}
+          {age && <span style={{ fontSize:10, color:MT2, marginLeft:"auto", flexShrink:0 }}>{age}</span>}
+        </div>
+        <div style={{ fontSize:13, fontWeight:700, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, marginBottom:4 }}>{item.title}</div>
+        {item.excerpt && <div style={{ fontSize:11, color:MT, lineHeight:1.5, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const }}>{item.excerpt}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── News skeleton ──────────────────────────────────────────────────────────────
+function NewsSkeleton() {
+  return (
+    <div style={{ display:"flex", gap:10, padding:12, background:BG2, border:`1px solid ${BD}`, borderRadius:14, marginBottom:8 }}>
+      <div className="anical-skel" style={{ width:68, height:68, borderRadius:8, flexShrink:0 }}/>
+      <div style={{ flex:1, display:"flex", flexDirection:"column", gap:7, justifyContent:"center" }}>
+        <div className="anical-skel" style={{ height:11, borderRadius:4, width:"20%" }}/>
+        <div className="anical-skel" style={{ height:13, borderRadius:4, width:"88%" }}/>
+        <div className="anical-skel" style={{ height:11, borderRadius:4, width:"65%" }}/>
+      </div>
+    </div>
+  );
+}
+
+// ── News view ──────────────────────────────────────────────────────────────────
+function NewsView({ favAnime }: { favAnime: any[] }) {
+  const [annNews, setAnnNews] = useState<NewsItem[]>([]);
+  const [favNews, setFavNews] = useState<NewsItem[]>([]);
+  const [upcoming, setUpcoming] = useState<UpcomingAnime[]>([]);
+  const [upcomingStars, setUpcomingStars] = useState<number[]>(() => LS.get<number[]>("anical_upcoming_stars", []));
+  const [annLoading, setAnnLoading] = useState(true);
+  const [favLoading, setFavLoading] = useState(true);
+  const [upcomingLoading, setUpcomingLoading] = useState(true);
+  const [annError, setAnnError] = useState(false);
+  const [detailUpcoming, setDetailUpcoming] = useState<UpcomingAnime | null>(null);
+
+  const toggleStar = (id: number) => {
+    setUpcomingStars((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      LS.set("anical_upcoming_stars", next);
+      return next;
+    });
+  };
+
+  const loadAnn = () => {
+    setAnnLoading(true); setAnnError(false);
+    const cached = LS.get<{ ts: number; data: NewsItem[] } | null>("anical_ann_news", null);
+    if (cached && Date.now() - cached.ts < NEWS_TTL) { setAnnNews(cached.data); setAnnLoading(false); return; }
+    fetchAnnNews()
+      .then((items) => { setAnnNews(items); LS.set("anical_ann_news", { ts: Date.now(), data: items }); })
+      .catch(() => setAnnError(true))
+      .finally(() => setAnnLoading(false));
+  };
+
+  useEffect(() => { loadAnn(); }, []);
+
+  useEffect(() => {
+    const cached = LS.get<{ ts: number; data: UpcomingAnime[] } | null>("anical_upcoming_cache", null);
+    if (cached && Date.now() - cached.ts < UPCOMING_TTL) { setUpcoming(cached.data); setUpcomingLoading(false); return; }
+    fetchUpcoming()
+      .then((items) => { setUpcoming(items); LS.set("anical_upcoming_cache", { ts: Date.now(), data: items }); })
+      .finally(() => setUpcomingLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (favAnime.length === 0) { setFavLoading(false); return; }
+    const top = favAnime.slice(0, 3);
+    const key = `anical_fav_news_${top.map((a: any) => a.id).join("_")}`;
+    const cached = LS.get<{ ts: number; data: NewsItem[] } | null>(key, null);
+    if (cached && Date.now() - cached.ts < NEWS_TTL) { setFavNews(cached.data); setFavLoading(false); return; }
+    Promise.all(top.map((a: any) => fetchAnimeNewsItems(a)))
+      .then((results) => { const all = results.flat(); setFavNews(all); LS.set(key, { ts: Date.now(), data: all }); })
+      .finally(() => setFavLoading(false));
+  }, [favAnime]);
+
+  const SectionHeader = ({ emoji, title, count, accent }: { emoji: string; title: string; count?: number; accent?: boolean }) => (
+    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12, fontSize:12, fontWeight:700, color: accent ? OR : MT, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
+      <span style={{ fontSize:14 }}>{emoji}</span><span>{title}</span>
+      {count !== undefined && <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background: accent ? OR2 : BG3, border:`1px solid ${accent ? OR3 : BD}`, color: accent ? OR : MT }}>{count}</span>}
+      <div style={{ flex:1, height:1, background:BD }}/>
+    </div>
+  );
+
+  return (
+    <div style={{ padding:"4px 16px 24px" }}>
+      <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", padding:"12px 0 16px" }}>
+        <div>
+          <div style={{ fontSize:22, fontWeight:900, letterSpacing:"-.5px" }}>Discover</div>
+          <div style={{ fontSize:12, color:MT, marginTop:2 }}>Upcoming seasons, news & your shows</div>
+        </div>
+        <button onClick={loadAnn} style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:10, padding:"7px 12px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>↻</button>
+      </div>
+
+      {/* ── Upcoming Anime ── */}
+      <div style={{ marginBottom:28 }}>
+        <SectionHeader emoji="🔜" title="Upcoming Anime" count={upcomingStars.length > 0 ? upcomingStars.length : undefined} accent={upcomingStars.length > 0}/>
+        {upcomingStars.length > 0 && (
+          <div style={{ fontSize:11, color:MT, marginBottom:10, padding:"6px 10px", background:OR2, border:`1px solid ${OR3}`, borderRadius:8 }}>
+            ★ {upcomingStars.length} show{upcomingStars.length === 1 ? "" : "s"} on your radar
+          </div>
+        )}
+        {upcomingLoading ? [0,1,2,3].map((i) => <NewsSkeleton key={i}/>) :
+         upcoming.length === 0 ? <div style={{ textAlign:"center", padding:"20px 0", color:MT, fontSize:13 }}>No upcoming shows found.</div> :
+         upcoming.map((a, i) => (
+           <UpcomingCard key={a.id} anime={a} starred={upcomingStars.includes(a.id)} onToggle={toggleStar} onOpen={setDetailUpcoming} delay={i * 20}/>
+         ))}
+      </div>
+
+      {/* ── Your Shows News ── */}
+      {favAnime.length > 0 && (
+        <div style={{ marginBottom:28 }}>
+          <SectionHeader emoji="⭐" title="Your Shows" count={favNews.length} accent/>
+          {favLoading ? [0,1,2].map((i) => <NewsSkeleton key={i}/>) :
+           favNews.length === 0 ? <div style={{ textAlign:"center", padding:"20px 0", color:MT, fontSize:13 }}>No recent news for your shows.</div> :
+           favNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 25}/>)}
+        </div>
+      )}
+
+      {/* ── Industry News ── */}
+      <div>
+        <SectionHeader emoji="📡" title="Industry News" count={!annLoading ? annNews.length : undefined}/>
+        {annLoading ? [0,1,2,3].map((i) => <NewsSkeleton key={i}/>) :
+         annError ? (
+           <div style={{ textAlign:"center", padding:"32px 0", color:MT, display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
+             <div style={{ fontSize:32 }}>📡</div>
+             <div style={{ fontSize:13 }}>Couldn't reach the news feed.</div>
+             <button onClick={loadAnn} style={{ background:BG3, border:`1px solid ${OR}`, color:OR, borderRadius:8, padding:"7px 16px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Retry</button>
+           </div>
+         ) :
+         annNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 20}/>)}
+      </div>
+
+      {/* ── Upcoming detail sheet ── */}
+      {detailUpcoming && (
+        <>
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.82)", zIndex:200, animation:"fadeIn .2s ease-out", backdropFilter:"blur(6px)" } as React.CSSProperties} onClick={() => setDetailUpcoming(null)}/>
+          <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"88vh", overflowY:"auto", zIndex:201, animation:"sheetUp .3s cubic-bezier(.2,.7,.2,1)" }}>
+            <div style={{ width:40, height:4, background:BD2, borderRadius:2, margin:"14px auto 0" }}/>
+            <div style={{ padding:"16px 20px 48px" }}>
+              {detailUpcoming.imageUrl && <img src={detailUpcoming.imageUrl} alt="" style={{ width:"100%", height:200, objectFit:"cover", objectPosition:"top", borderRadius:14, marginBottom:16, background:BG4, display:"block" }}/>}
+              <div style={{ fontSize:21, fontWeight:800, lineHeight:1.2, marginBottom:8 }}>{detailUpcoming.title}</div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" as const, marginBottom:12 }}>
+                {[capitalize(detailUpcoming.season), detailUpcoming.year].filter(Boolean).join(" ") && (
+                  <span style={{ fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:6, background:OR2, color:OR, border:`1px solid ${OR3}` }}>
+                    {[capitalize(detailUpcoming.season), detailUpcoming.year].filter(Boolean).join(" ")}
+                  </span>
+                )}
+                {detailUpcoming.episodes && <span style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:6, background:BG4, color:MT, border:`1px solid ${BD}` }}>{detailUpcoming.episodes} eps</span>}
+                {detailUpcoming.genres?.slice(0, 3).map((g) => <span key={g} style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:6, background:BG4, color:MT, border:`1px solid ${BD}` }}>{g}</span>)}
+              </div>
+              {detailUpcoming.studios?.[0] && <div style={{ fontSize:12, color:MT, marginBottom:12 }}>Studio: {detailUpcoming.studios[0]}</div>}
+              <div style={{ fontSize:13, lineHeight:1.65, color:MT, marginBottom:20 }}>{detailUpcoming.synopsis || "No synopsis yet."}</div>
+              <div style={{ display:"flex", gap:8 }}>
+                <button style={{ flex:1, padding:13, borderRadius:10, border:`1px solid ${upcomingStars.includes(detailUpcoming.id) ? OR : BD}`, background: upcomingStars.includes(detailUpcoming.id) ? OR2 : BG3, color: upcomingStars.includes(detailUpcoming.id) ? OR : MT, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                  onClick={() => toggleStar(detailUpcoming.id)}>
+                  {upcomingStars.includes(detailUpcoming.id) ? "★ On your radar" : "☆ Add to radar"}
+                </button>
+                {detailUpcoming.mal_url && (
+                  <button style={{ flex:1.2, padding:13, borderRadius:10, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit", boxShadow:`0 6px 20px -4px rgba(255,107,26,.5)` }}
+                    onClick={() => openUrl(detailUpcoming.mal_url!)}>
+                    View on MAL
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Fav card ───────────────────────────────────────────────────────────────────
 function FavCard({ anime, delay, tz, notifEnabled, perAnimeNotif, toggleAnimeNotif, onOpen, onRemove, tick }: any) {
   void tick;
@@ -848,29 +1171,16 @@ function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, 
         ))
       )}
 
-      {!IS_NATIVE && (
-        <div style={{ marginTop:28, padding:"18px 16px", background:`linear-gradient(135deg, ${BG2}, ${BG3})`, border:`1px solid ${BD2}`, borderRadius:16, position:"relative", overflow:"hidden" }}>
-          <div style={{ position:"absolute", top:-40, right:-30, fontSize:120, opacity:.05, transform:"rotate(15deg)" }}>📱</div>
-          <div style={{ position:"relative" }}>
-            <div style={{ fontSize:11, fontWeight:700, color:OR, letterSpacing:"1px", textTransform:"uppercase" as const, marginBottom:6 }}>Pro tip</div>
-            <div style={{ fontSize:16, fontWeight:800, marginBottom:6, letterSpacing:"-.3px" }}>Take AniCal everywhere</div>
-            <div style={{ fontSize:12, color:MT, lineHeight:1.6, marginBottom:14 }}>Install to your home screen or grab the browser extension for one-click access from any tab.</div>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" as const }}>
-              <button style={{ background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", border:"none", borderRadius:99, padding:"10px 16px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit", boxShadow:`0 6px 20px -4px rgba(255,107,26,.5)` }} onClick={installPwa}>📱 Install app</button>
-              <button style={{ background:BG3, color:TX, border:`1px solid ${BD}`, borderRadius:99, padding:"10px 16px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }} onClick={downloadExtension}>🧩 Extension</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
 // ── Bottom nav ─────────────────────────────────────────────────────────────────
-function BottomNav({ view, setView, favCount }: { view: string; setView: (v: "schedule"|"month"|"stats") => void; favCount: number }) {
-  const tabs: { id: "schedule"|"month"|"stats"; emoji: string; label: string }[] = [
+function BottomNav({ view, setView, favCount }: { view: string; setView: (v: "schedule"|"month"|"news"|"stats") => void; favCount: number }) {
+  const tabs: { id: "schedule"|"month"|"news"|"stats"; emoji: string; label: string }[] = [
     { id:"schedule", emoji:"📋", label:"Schedule" },
     { id:"month",    emoji:"📅", label:"Calendar" },
+    { id:"news",     emoji:"📰", label:"News"     },
     { id:"stats",    emoji:"⭐", label:"My List"  },
   ];
   return (
@@ -917,7 +1227,7 @@ export default function AniCal() {
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadMsg, setLoadMsg] = useState("Starting up…");
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"schedule"|"month"|"stats">("schedule");
+  const [view, setView] = useState<"schedule"|"month"|"news"|"stats">("schedule");
   const [selectedDay, setSelectedDay] = useState(todayDayIdx);
   const [monthOffset, setMonthOffset] = useState(0);
   const [favs, setFavs] = useState<number[]>([]);
@@ -1227,6 +1537,9 @@ export default function AniCal() {
                 onToggleFav={toggleFav}
                 todayDayIdx={todayDayIdx}
               />
+            )}
+            {view === "news" && (
+              <NewsView favAnime={favAnime}/>
             )}
             {view === "stats" && (
               <MyListView
