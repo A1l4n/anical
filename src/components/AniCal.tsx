@@ -268,31 +268,43 @@ async function fetchAnimeNewsItems(anime: Anime): Promise<NewsItem[]> {
 }
 
 async function fetchDay(day: string): Promise<Anime[]> {
-  const res = await fetch(`https://api.jikan.moe/v4/schedules?filter=${day}&limit=25&sfw=false`);
-  if (!res.ok) throw new Error(`Jikan ${res.status}`);
-  const json = await res.json();
-  const seen = new Set<number>();
-  return (json.data || []).flatMap((a: any) => {
-    const id: number = a.mal_id;
-    if (seen.has(id)) return [];
-    seen.add(id);
-    return [{
-      id,
-      title: a.title_english || a.title || "Untitled",
-      title_english: a.title_english,
-      image_url: a.images?.webp?.image_url || a.images?.jpg?.image_url || null,
-      score: a.score,
-      episodes: a.episodes,
-      synopsis: a.synopsis ? (a.synopsis.length > 200 ? a.synopsis.slice(0, 197) + "…" : a.synopsis) : null,
-      genres: (a.genres || []).map((g: any) => g.name),
-      broadcast_time: a.broadcast?.time || null,
-      broadcast_day: a.broadcast?.day ? a.broadcast.day.toLowerCase().replace(/s$/, "") : day,
-      studios: (a.studios || []).map((s: any) => s.name),
-      year: a.year,
-      season: a.season,
-      mal_url: a.url,
-    }];
-  });
+  // Retry up to 3 times; on 429 (rate-limit) wait 3 s before retrying
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, attempt === 1 ? 3000 : 6000));
+    let res: Response;
+    try {
+      res = await fetch(`https://api.jikan.moe/v4/schedules?filter=${day}&limit=25&sfw=false`, { signal: AbortSignal.timeout(12000) });
+    } catch {
+      if (attempt < 2) continue; // network hiccup — retry
+      return [];
+    }
+    if (res.status === 429) continue; // rate-limited — back off and retry
+    if (!res.ok) throw new Error(`Jikan ${res.status}`);
+    const json = await res.json();
+    const seen = new Set<number>();
+    return (json.data || []).flatMap((a: any) => {
+      const id: number = a.mal_id;
+      if (seen.has(id)) return [];
+      seen.add(id);
+      return [{
+        id,
+        title: a.title_english || a.title || "Untitled",
+        title_english: a.title_english,
+        image_url: a.images?.webp?.image_url || a.images?.jpg?.image_url || null,
+        score: a.score,
+        episodes: a.episodes,
+        synopsis: a.synopsis ? (a.synopsis.length > 200 ? a.synopsis.slice(0, 197) + "…" : a.synopsis) : null,
+        genres: (a.genres || []).map((g: any) => g.name),
+        broadcast_time: a.broadcast?.time || null,
+        broadcast_day: a.broadcast?.day ? a.broadcast.day.toLowerCase().replace(/s$/, "") : day,
+        studios: (a.studios || []).map((s: any) => s.name),
+        year: a.year,
+        season: a.season,
+        mal_url: a.url,
+      }];
+    });
+  }
+  return [];
 }
 
 const LS = {
@@ -2051,6 +2063,27 @@ export default function AniCal() {
     await notif.testFire("AniCal", "Your favorites will alert you like this 🔔");
   }, [showToast]);
 
+  // Background-heal days that have zero results (likely rate-limit failures in a prior fetch)
+  const healEmptyDays = useCallback(async (base: Schedule) => {
+    const empty = DAYS.filter((d) => !base[d] || base[d].length === 0);
+    if (empty.length === 0) return;
+    const patch: Schedule = {};
+    for (const day of empty) {
+      await new Promise((r) => setTimeout(r, 700));
+      try {
+        const data = await fetchDay(day);
+        if (data.length > 0) patch[day] = data;
+      } catch {}
+    }
+    if (Object.keys(patch).length === 0) return;
+    setSchedule((prev) => {
+      const next = { ...prev, ...patch };
+      const cached = LS.get<{ ts: number; data: Schedule } | null>("anical_schedule_cache", null);
+      LS.set("anical_schedule_cache", { ts: cached?.ts ?? Date.now(), data: next });
+      return next;
+    });
+  }, []);
+
   const loadSchedule = useCallback(async (force = false, silent = false) => {
     if (!force) {
       const cached = LS.get<{ ts: number; data: Schedule } | null>("anical_schedule_cache", null);
@@ -2058,6 +2091,8 @@ export default function AniCal() {
         setSchedule(cached.data);
         setLastUpdated(new Date(cached.ts));
         setBoot("ready");
+        // Silently re-fetch any days that are cached as empty (past rate-limit failures)
+        setTimeout(() => healEmptyDays(cached.data), 1800);
         return;
       }
     }
@@ -2072,7 +2107,8 @@ export default function AniCal() {
         setLoadMsg(`Loading ${capitalize(DAYS[i])}… (${i + 1}/${DAYS.length})`);
         setLoadProgress(Math.round((i / DAYS.length) * 90));
         try { result[DAYS[i]] = await fetchDay(DAYS[i]); } catch { result[DAYS[i]] = []; }
-        await new Promise((r) => setTimeout(r, 350));
+        // 650 ms gap keeps us well under Jikan's 3 req/s rate limit
+        if (i < DAYS.length - 1) await new Promise((r) => setTimeout(r, 650));
       }
       setLoadProgress(100);
       setSchedule(result);
@@ -2080,12 +2116,14 @@ export default function AniCal() {
       setLastUpdated(new Date(ts));
       LS.set("anical_schedule_cache", { data: result, ts });
       setTimeout(() => setBoot("ready"), 250);
+      // Heal any days that still came back empty despite retries (e.g. API outage mid-load)
+      setTimeout(() => healEmptyDays(result), 2500);
     } catch (e: any) {
       if (!silent) { setError(e.message || "Failed to load"); setBoot("error"); }
     } finally {
       isLoadingRef.current = false;
     }
-  }, []);
+  }, [healEmptyDays]);
 
   useEffect(() => { if (boot === "loading") loadSchedule(); }, [boot, loadSchedule]);
 
