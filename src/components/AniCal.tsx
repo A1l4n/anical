@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Capacitor } from "@capacitor/core";
+import { Haptics, ImpactStyle } from "@capacitor/haptics";
 import * as notif from "@/lib/notifications";
 import type { ScheduleEntry } from "@/lib/notifications";
 
@@ -19,6 +20,12 @@ const CACHE_TTL = 4 * 3600 * 1000;
 const NEWS_TTL     = 30 * 60 * 1000;
 const UPCOMING_TTL = 6  * 3600 * 1000;
 const PULL_THRESHOLD = 70;
+const COMMUNITY_TTL  = 60 * 1000; // 1 min cache for posts
+
+// ── Supabase ───────────────────────────────────────────────────────────────────
+const SB_URL  = "https://seopeujrimwxnuvcbfxx.supabase.co";
+const SB_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNlb3BldWpyaW13eG51dmNiZnh4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3NjUzNjEsImV4cCI6MjA5NDM0MTM2MX0.XT8abPOuAygiZEP7HOwbF7Mk8Z7wqC_6cw-0lZK_ClI";
+const AVATAR_COLORS = ["#FF6B1A","#E91E8C","#9C27B0","#2196F3","#00BCD4","#4CAF50","#FF5722","#607D8B","#F44336","#FF9800"];
 
 // ── Palette ────────────────────────────────────────────────────────────────────
 const OR  = "#FF6B1A";
@@ -76,6 +83,17 @@ type UpcomingAnime = {
   synopsis?: string | null;
   studios?: string[];
   mal_url?: string | null;
+};
+
+type CommunityPost = {
+  id: string;
+  anime_id: number;
+  anime_title: string;
+  nickname: string;
+  avatar_color: string;
+  message: string;
+  reactions: Record<string, number>;
+  created_at: string;
 };
 
 const DEFAULT_NOTIF: NotifSettings = { enabled: false, leadMinutes: 10, perAnime: {} };
@@ -254,6 +272,57 @@ const LS = {
     } catch {}
   },
 };
+
+// ── Avatar & Supabase helpers ──────────────────────────────────────────────────
+function getAvatarColor(nickname: string): string {
+  const hash = nickname.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+}
+
+function Avatar({ nickname, color, size = 36 }: { nickname: string; color: string; size?: number }) {
+  return (
+    <div style={{ width:size, height:size, borderRadius:"50%", background:`linear-gradient(135deg, ${color}, ${color}99)`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size * 0.42, fontWeight:800, color:"#fff", flexShrink:0, boxShadow:`0 3px 10px ${color}44`, userSelect:"none" } as React.CSSProperties}>
+      {nickname[0]?.toUpperCase() || "?"}
+    </div>
+  );
+}
+
+async function sbRequest<T>(path: string, opts?: RequestInit): Promise<T> {
+  const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
+    ...opts,
+    headers: {
+      "apikey": SB_ANON,
+      "Authorization": `Bearer ${SB_ANON}`,
+      "Content-Type": "application/json",
+      "Prefer": "return=representation",
+      ...(opts?.headers || {}),
+    },
+  });
+  if (!res.ok) throw new Error(`SB ${res.status}`);
+  return res.json();
+}
+
+async function fetchCommunityPosts(animeId: number): Promise<CommunityPost[]> {
+  return sbRequest<CommunityPost[]>(
+    `community_posts?anime_id=eq.${animeId}&order=created_at.desc&limit=60`
+  );
+}
+
+async function submitCommunityPost(p: { anime_id: number; anime_title: string; nickname: string; avatar_color: string; message: string }): Promise<CommunityPost> {
+  const arr = await sbRequest<CommunityPost[]>("community_posts", {
+    method: "POST",
+    body: JSON.stringify({ ...p, reactions: { "🔥":0, "❤️":0, "😂":0, "🤯":0 } }),
+  });
+  return arr[0];
+}
+
+async function reactToPost(post: CommunityPost, emoji: string): Promise<void> {
+  const updated = { ...post.reactions, [emoji]: (post.reactions[emoji] || 0) + 1 };
+  await sbRequest(`community_posts?id=eq.${post.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ reactions: updated }),
+  });
+}
 
 // ── Global CSS ─────────────────────────────────────────────────────────────────
 const GLOBAL_CSS = `
@@ -470,7 +539,7 @@ function AnimeCard({ anime, favorites, onOpen, onToggleFav, selectedDayIdx, toda
 }
 
 // ── Detail sheet ───────────────────────────────────────────────────────────────
-function DetailSheet({ anime, favorites, onClose, onToggleFav, tz }: { anime: Anime | null; favorites: number[]; onClose: () => void; onToggleFav: (id: number) => void; tz: string }) {
+function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, tz }: { anime: Anime | null; favorites: number[]; onClose: () => void; onToggleFav: (id: number) => void; onOpenCommunity: (a: Anime) => void; tz: string }) {
   if (!anime) return null;
   const isFav = favorites.includes(anime.id);
   const localTime = jstToLocal(anime.broadcast_time, tz);
@@ -501,14 +570,188 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, tz }: { anime: An
             </div>
           )}
           <div style={{ fontSize:13, lineHeight:1.65, color:MT, marginBottom:16 }}>{anime.synopsis || "No synopsis available."}</div>
-          <div style={{ display:"flex", gap:8 }}>
-            <button style={{ flex:1, padding:13, borderRadius:10, border:`1px solid ${isFav ? OR : BD}`, background: isFav ? OR2 : BG3, color: isFav ? OR : MT, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }} onClick={() => onToggleFav(anime.id)}>
-              {isFav ? "★ Favorited" : "☆ Add to Favorites"}
-            </button>
-            <button style={{ flex:1.5, padding:13, borderRadius:10, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:6, boxShadow:`0 6px 20px -4px rgba(255,107,26,.5)` }} onClick={() => openUrl(`https://www.crunchyroll.com/search?q=${encodeURIComponent(anime.title)}`)}>
-              ▶ Crunchyroll
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <div style={{ display:"flex", gap:8 }}>
+              <button style={{ flex:1, padding:12, borderRadius:10, border:`1px solid ${isFav ? OR : BD}`, background: isFav ? OR2 : BG3, color: isFav ? OR : MT, fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }} onClick={() => onToggleFav(anime.id)}>
+                {isFav ? "★ Favorited" : "☆ Favorite"}
+              </button>
+              <button
+                style={{ flex:1, padding:12, borderRadius:10, border:`1px solid rgba(255,255,255,0.1)`, background:BG3, color:MT, fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:5 }}
+                onClick={() => { onClose(); setTimeout(() => onOpenCommunity(anime), 120); }}
+              >
+                <span>💬</span><span>Community</span>
+              </button>
+            </div>
+            <button style={{ width:"100%", padding:13, borderRadius:10, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:6, boxShadow:`0 6px 20px -4px rgba(255,107,26,.5)` }} onClick={() => openUrl(`https://www.crunchyroll.com/search?q=${encodeURIComponent(anime.title)}`)}>
+              ▶ Watch on Crunchyroll
             </button>
           </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Community sheet ────────────────────────────────────────────────────────────
+const REACTION_EMOJIS = ["🔥","❤️","😂","🤯"];
+
+function CommunitySheet({ anime, onClose }: { anime: Anime; onClose: () => void }) {
+  const [posts, setPosts] = useState<CommunityPost[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [nickname, setNickname] = useState<string>(() => LS.get<string>("anical_nickname", ""));
+  const [nickDraft, setNickDraft] = useState("");
+  const [pickingNick, setPickingNick] = useState(!LS.get<string>("anical_nickname", ""));
+  const [reactedMap, setReactedMap] = useState<Record<string, string>>({});
+  const listRef = useRef<HTMLDivElement>(null);
+  const avatarColor = nickname ? getAvatarColor(nickname) : OR;
+
+  const load = useCallback(async () => {
+    try {
+      const p = await fetchCommunityPosts(anime.id);
+      setPosts(p);
+    } catch {} finally { setLoading(false); }
+  }, [anime.id]);
+
+  useEffect(() => { load(); const id = setInterval(load, COMMUNITY_TTL); return () => clearInterval(id); }, [load]);
+
+  const confirmNick = () => {
+    const n = nickDraft.trim();
+    if (n.length < 2) return;
+    setNickname(n); LS.set("anical_nickname", n); setPickingNick(false);
+  };
+
+  const handleSend = async () => {
+    if (!draft.trim() || !nickname || sending) return;
+    setSending(true);
+    try {
+      const post = await submitCommunityPost({ anime_id: anime.id, anime_title: anime.title, nickname, avatar_color: avatarColor, message: draft.trim() });
+      setPosts(p => [post, ...p]);
+      setDraft("");
+      Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+    } catch {} finally { setSending(false); }
+  };
+
+  const handleReact = async (post: CommunityPost, emoji: string) => {
+    const key = `${post.id}_${emoji}`;
+    if (reactedMap[key]) return;
+    setReactedMap(m => ({ ...m, [key]: "1" }));
+    setPosts(ps => ps.map(p => p.id === post.id ? { ...p, reactions: { ...p.reactions, [emoji]: (p.reactions[emoji] || 0) + 1 } } : p));
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+    try { await reactToPost(post, emoji); } catch {}
+  };
+
+  const NICK_SUGGESTIONS = ["OtakuPrime","AnimeGuru","WaifuHunter","SenpaiVibes","MangaHead","NarutoBro","ShinjiPilot","GarouFan","ZeroTwo","ReiAya"];
+
+  return (
+    <>
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.85)", zIndex:300, backdropFilter:"blur(8px)" } as React.CSSProperties} onClick={onClose}/>
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG, borderRadius:"24px 24px 0 0", border:`1px solid rgba(255,255,255,0.08)`, borderBottom:"none", height:"88vh", display:"flex", flexDirection:"column", zIndex:301, animation:"sheetUp .32s cubic-bezier(.2,.7,.2,1)" } as React.CSSProperties}>
+        {/* Handle */}
+        <div style={{ width:40, height:4, background:"rgba(255,255,255,0.15)", borderRadius:2, margin:"14px auto 0", flexShrink:0 }}/>
+
+        {/* Header */}
+        <div style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 18px 10px", borderBottom:`1px solid rgba(255,255,255,0.06)`, flexShrink:0 }}>
+          {anime.image_url && <img src={anime.image_url} alt="" style={{ width:36, height:48, borderRadius:6, objectFit:"cover", background:BG4 }}/>}
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:13, fontWeight:800, lineHeight:1.2, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:1, WebkitBoxOrient:"vertical" as const }}>{anime.title}</div>
+            <div style={{ fontSize:11, color:MT, marginTop:2 }}>💬 Community · {loading ? "…" : `${posts.length} posts`}</div>
+          </div>
+          <button onClick={onClose} style={{ background:"rgba(255,255,255,0.08)", border:"none", color:MT, width:30, height:30, borderRadius:"50%", cursor:"pointer", fontSize:14, fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
+        </div>
+
+        {/* Post list */}
+        <div ref={listRef} style={{ flex:1, overflowY:"auto", padding:"12px 16px 8px" }}>
+          {loading ? (
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {[0,1,2,3].map(i => <div key={i} style={{ height:80, borderRadius:14, background:BG2, border:`1px solid ${BD}`, animation:`shimmer 1.4s ${i*0.15}s ease-in-out infinite alternate` }}/>)}
+            </div>
+          ) : posts.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"48px 20px", color:MT }}>
+              <div style={{ fontSize:48, marginBottom:12 }}>💬</div>
+              <div style={{ fontSize:15, fontWeight:700, marginBottom:6 }}>No posts yet</div>
+              <div style={{ fontSize:12, color:MT2 }}>Be the first to share your thoughts!</div>
+            </div>
+          ) : (
+            posts.map((post, i) => (
+              <div key={post.id} style={{ background:BG2, border:`1px solid rgba(255,255,255,0.06)`, borderRadius:14, padding:"12px 14px", marginBottom:8, animation:`cardIn .3s ${Math.min(i*40,300)}ms cubic-bezier(.2,.7,.2,1) both` }}>
+                <div style={{ display:"flex", gap:10, marginBottom:8, alignItems:"flex-start" }}>
+                  <Avatar nickname={post.nickname} color={post.avatar_color} size={34}/>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:TX }}>{post.nickname}</div>
+                    <div style={{ fontSize:10, color:MT2, marginTop:1 }}>{formatNewsAge(post.created_at)}</div>
+                  </div>
+                </div>
+                <div style={{ fontSize:14, lineHeight:1.6, color:TX, marginBottom:10, wordBreak:"break-word" as const }}>{post.message}</div>
+                <div style={{ display:"flex", gap:5, flexWrap:"wrap" as const }}>
+                  {REACTION_EMOJIS.map(emoji => {
+                    const count = post.reactions[emoji] || 0;
+                    const reacted = !!reactedMap[`${post.id}_${emoji}`];
+                    return (
+                      <button key={emoji} onClick={() => handleReact(post, emoji)}
+                        style={{ display:"flex", alignItems:"center", gap:4, padding:"3px 9px", borderRadius:99, background: reacted ? OR2 : "rgba(255,255,255,0.04)", border:`1px solid ${reacted ? OR3 : "rgba(255,255,255,0.08)"}`, cursor:"pointer", fontFamily:"inherit", transition:"all .15s" }}>
+                        <span style={{ fontSize:13 }}>{emoji}</span>
+                        {count > 0 && <span style={{ fontSize:10, fontWeight:700, color: reacted ? OR : MT }}>{count}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Nickname picker / Compose */}
+        <div style={{ borderTop:`1px solid rgba(255,255,255,0.06)`, padding:"12px 16px 32px", flexShrink:0, background:BG }}>
+          {pickingNick ? (
+            <div>
+              <div style={{ fontSize:13, fontWeight:700, marginBottom:10, color:TX }}>Pick your community name</div>
+              <div style={{ display:"flex", flexWrap:"wrap" as const, gap:6, marginBottom:10 }}>
+                {NICK_SUGGESTIONS.map(s => (
+                  <button key={s} onClick={() => setNickDraft(s)}
+                    style={{ fontSize:11, padding:"4px 10px", borderRadius:99, border:`1px solid ${nickDraft === s ? OR : BD}`, background: nickDraft === s ? OR2 : BG3, color: nickDraft === s ? OR : MT, cursor:"pointer", fontFamily:"inherit" }}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display:"flex", gap:8 }}>
+                <input
+                  style={{ flex:1, background:BG3, border:`1px solid ${BD}`, borderRadius:10, padding:"9px 12px", color:TX, fontSize:13, fontFamily:"inherit", outline:"none" }}
+                  placeholder="or type your own…"
+                  value={nickDraft}
+                  onChange={e => setNickDraft(e.target.value)}
+                  maxLength={24}
+                  onKeyDown={e => e.key === "Enter" && confirmNick()}
+                />
+                <button onClick={confirmNick} disabled={nickDraft.trim().length < 2}
+                  style={{ padding:"9px 16px", borderRadius:10, border:"none", background: nickDraft.trim().length >= 2 ? `linear-gradient(135deg, ${OR}, #cc5610)` : BG3, color: nickDraft.trim().length >= 2 ? "#fff" : MT2, fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+                  Set
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ display:"flex", gap:8, alignItems:"flex-end" }}>
+                <Avatar nickname={nickname} color={avatarColor} size={32}/>
+                <textarea
+                  style={{ flex:1, background:BG2, border:`1px solid ${draft ? OR3 : "rgba(255,255,255,0.09)"}`, borderRadius:12, padding:"9px 12px", color:TX, fontSize:14, fontFamily:"inherit", resize:"none", outline:"none", minHeight:40, maxHeight:96, lineHeight:1.5, transition:"border-color .2s" } as React.CSSProperties}
+                  placeholder="Share your thoughts…"
+                  value={draft}
+                  onChange={e => setDraft(e.target.value.slice(0, 500))}
+                  rows={1}
+                />
+                <button onClick={handleSend} disabled={!draft.trim() || sending}
+                  style={{ padding:"9px 14px", borderRadius:12, border:"none", background: draft.trim() ? `linear-gradient(135deg, ${OR}, #cc5610)` : BG3, color: draft.trim() ? "#fff" : MT2, fontSize:13, fontWeight:700, cursor: draft.trim() ? "pointer" : "default", fontFamily:"inherit", boxShadow: draft.trim() ? `0 4px 14px rgba(255,107,26,.4)` : "none", transition:"all .18s", flexShrink:0 } as React.CSSProperties}>
+                  {sending ? "…" : "Send"}
+                </button>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:6 }}>
+                <div style={{ fontSize:10, color:MT2 }}>Posting as <span style={{ color:avatarColor, fontWeight:700 }}>{nickname}</span></div>
+                <button onClick={() => { setPickingNick(true); setNickDraft(nickname); }} style={{ fontSize:10, color:MT2, background:"none", border:"none", cursor:"pointer", fontFamily:"inherit", textDecoration:"underline" }}>Change</button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>
@@ -1296,6 +1539,7 @@ export default function AniCal() {
   const [favFilter, setFavFilter] = useState(false);
   const [search, setSearch] = useState("");
   const [detailAnime, setDetailAnime] = useState<Anime | null>(null);
+  const [communityAnime, setCommunityAnime] = useState<Anime | null>(null);
   const [toast, setToast] = useState({ show: false, msg: "" });
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
@@ -1347,6 +1591,7 @@ export default function AniCal() {
   }, []);
 
   const toggleFav = useCallback((id: number) => {
+    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
     setFavs((prev) => {
       const adding = !prev.includes(id);
       showToast(adding ? "Added to favorites ★" : "Removed from favorites");
@@ -1661,7 +1906,13 @@ export default function AniCal() {
           {detailAnime && (
             <DetailSheet anime={detailAnime} favorites={favs} tz={tz}
               onClose={() => setDetailAnime(null)}
-              onToggleFav={(id: number) => { toggleFav(id); setDetailAnime((a) => (a ? { ...a } : null)); }}/>
+              onToggleFav={(id: number) => { toggleFav(id); setDetailAnime((a) => (a ? { ...a } : null)); }}
+              onOpenCommunity={(a) => { setDetailAnime(null); setCommunityAnime(a); }}/>
+          )}
+
+          {/* Community thread sheet */}
+          {communityAnime && (
+            <CommunitySheet anime={communityAnime} onClose={() => setCommunityAnime(null)}/>
           )}
 
           {/* Toast */}
