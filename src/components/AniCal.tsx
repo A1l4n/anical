@@ -628,26 +628,46 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, 
   );
 }
 
-// ── Community sheet ────────────────────────────────────────────────────────────
+// ── Community sheet (Reddit-style) ────────────────────────────────────────────
 const REACTION_EMOJIS = ["🔥","❤️","😂","🤯"];
+const NICK_SUGGESTIONS = ["OtakuPrime","AnimeGuru","WaifuHunter","SenpaiVibes","MangaHead","NarutoBro","ShinjiPilot","GarouFan","ZeroTwo","ReiAya"];
+type SortMode = "hot" | "new" | "top";
+
+function hotScore(post: CommunityPost): number {
+  const votes = post.reactions["▲"] || 0;
+  const awards = REACTION_EMOJIS.reduce((a, e) => a + (post.reactions[e] || 0), 0);
+  const ageH = (Date.now() - new Date(post.created_at).getTime()) / 3_600_000;
+  return votes * 3 + awards * 1.5 - Math.max(0, Math.log(ageH + 1) * 1.8);
+}
+
+function sortPosts(posts: CommunityPost[], mode: SortMode): CommunityPost[] {
+  const copy = [...posts];
+  if (mode === "hot") return copy.sort((a, b) => hotScore(b) - hotScore(a));
+  if (mode === "top") return copy.sort((a, b) => {
+    const sa = Object.values(b.reactions).reduce((x,y)=>x+y,0);
+    const sb = Object.values(a.reactions).reduce((x,y)=>x+y,0);
+    return sa - sb;
+  });
+  return copy; // "new" — already ordered by created_at desc from API
+}
 
 function CommunitySheet({ anime, onClose }: { anime: Anime; onClose: () => void }) {
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState("");
+  const [composing, setComposing] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sortMode, setSortMode] = useState<SortMode>("hot");
   const [nickname, setNickname] = useState<string>(() => LS.get<string>("anical_nickname", ""));
   const [nickDraft, setNickDraft] = useState("");
   const [pickingNick, setPickingNick] = useState(!LS.get<string>("anical_nickname", ""));
   const [reactedMap, setReactedMap] = useState<Record<string, string>>({});
-  const listRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const avatarColor = nickname ? getAvatarColor(nickname) : OR;
 
   const load = useCallback(async () => {
-    try {
-      const p = await fetchCommunityPosts(anime.id);
-      setPosts(p);
-    } catch {} finally { setLoading(false); }
+    try { const p = await fetchCommunityPosts(anime.id); setPosts(p); }
+    catch {} finally { setLoading(false); }
   }, [anime.id]);
 
   useEffect(() => { load(); const id = setInterval(load, COMMUNITY_TTL); return () => clearInterval(id); }, [load]);
@@ -662,11 +682,20 @@ function CommunitySheet({ anime, onClose }: { anime: Anime; onClose: () => void 
     if (!draft.trim() || !nickname || sending) return;
     setSending(true);
     try {
-      const post = await submitCommunityPost({ anime_id: anime.id, anime_title: anime.title, nickname, avatar_color: avatarColor, message: draft.trim() });
+      const post = await submitCommunityPost({ anime_id:anime.id, anime_title:anime.title, nickname, avatar_color:avatarColor, message:draft.trim() });
       setPosts(p => [post, ...p]);
-      setDraft("");
+      setDraft(""); setComposing(false);
       Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
     } catch {} finally { setSending(false); }
+  };
+
+  const handleVote = async (post: CommunityPost) => {
+    const key = `${post.id}_▲`;
+    if (reactedMap[key]) return;
+    setReactedMap(m => ({ ...m, [key]: "1" }));
+    setPosts(ps => ps.map(p => p.id === post.id ? { ...p, reactions: { ...p.reactions, "▲": (p.reactions["▲"] || 0) + 1 } } : p));
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+    try { await reactToPost(post, "▲"); } catch {}
   };
 
   const handleReact = async (post: CommunityPost, emoji: string) => {
@@ -678,114 +707,181 @@ function CommunitySheet({ anime, onClose }: { anime: Anime; onClose: () => void 
     try { await reactToPost(post, emoji); } catch {}
   };
 
-  const NICK_SUGGESTIONS = ["OtakuPrime","AnimeGuru","WaifuHunter","SenpaiVibes","MangaHead","NarutoBro","ShinjiPilot","GarouFan","ZeroTwo","ReiAya"];
+  const sorted = sortPosts(posts, sortMode);
+  const totalVotes = posts.reduce((s, p) => s + (p.reactions["▲"] || 0), 0);
+  const uniquePosters = new Set(posts.map(p => p.nickname)).size;
 
   return (
     <>
-      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.85)", zIndex:300, backdropFilter:"blur(8px)" } as React.CSSProperties} onClick={onClose}/>
-      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG, borderRadius:"24px 24px 0 0", border:`1px solid rgba(255,255,255,0.08)`, borderBottom:"none", height:"88vh", display:"flex", flexDirection:"column", zIndex:301, animation:"sheetUp .32s cubic-bezier(.2,.7,.2,1)" } as React.CSSProperties}>
-        {/* Handle */}
-        <div style={{ width:40, height:4, background:"rgba(255,255,255,0.15)", borderRadius:2, margin:"14px auto 0", flexShrink:0 }}/>
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.88)", zIndex:300, backdropFilter:"blur(10px)" } as React.CSSProperties} onClick={onClose}/>
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid rgba(255,255,255,0.07)`, borderBottom:"none", height:"91vh", display:"flex", flexDirection:"column", zIndex:301, animation:"sheetUp .3s cubic-bezier(.2,.7,.2,1)" } as React.CSSProperties}>
 
-        {/* Header */}
-        <div style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 18px 10px", borderBottom:`1px solid rgba(255,255,255,0.06)`, flexShrink:0 }}>
-          {anime.image_url && <img src={anime.image_url} alt="" style={{ width:36, height:48, borderRadius:6, objectFit:"cover", background:BG4 }}/>}
-          <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontSize:13, fontWeight:800, lineHeight:1.2, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:1, WebkitBoxOrient:"vertical" as const }}>{anime.title}</div>
-            <div style={{ fontSize:11, color:MT, marginTop:2 }}>💬 Community · {loading ? "…" : `${posts.length} posts`}</div>
+        {/* ── Drag handle ── */}
+        <div style={{ width:36, height:4, background:"rgba(255,255,255,0.18)", borderRadius:2, margin:"12px auto 0", flexShrink:0 }}/>
+
+        {/* ── Subreddit-style header ── */}
+        <div style={{ flexShrink:0 }}>
+          {/* Banner */}
+          <div style={{ height:54, background:`linear-gradient(135deg, #1a0a2e, #0f0a1e, #0a1628)`, position:"relative", overflow:"hidden" }}>
+            {anime.image_url && <img src={anime.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", opacity:.18, filter:"blur(4px)", transform:"scale(1.08)" }}/>}
+            <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, transparent 40%, rgba(17,17,25,.9))" }}/>
           </div>
-          <button onClick={onClose} style={{ background:"rgba(255,255,255,0.08)", border:"none", color:MT, width:30, height:30, borderRadius:"50%", cursor:"pointer", fontSize:14, fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
+          {/* Community info row */}
+          <div style={{ display:"flex", alignItems:"flex-end", gap:12, padding:"0 16px 12px", marginTop:-20, position:"relative" }}>
+            {/* Icon */}
+            <div style={{ width:52, height:52, borderRadius:14, background:`linear-gradient(135deg, #7c3aed, #4f46e5)`, border:`3px solid ${BG2}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, flexShrink:0, boxShadow:`0 4px 16px rgba(124,58,237,.4)` }}>
+              {anime.image_url ? <img src={anime.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", borderRadius:11 }}/> : "💬"}
+            </div>
+            <div style={{ flex:1, minWidth:0, paddingBottom:2 }}>
+              <div style={{ fontSize:15, fontWeight:800, lineHeight:1.2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{anime.title}</div>
+              <div style={{ display:"flex", gap:10, marginTop:3, flexWrap:"wrap" as const }}>
+                <span style={{ fontSize:10, color:MT2, fontWeight:600 }}>{posts.length} posts</span>
+                <span style={{ fontSize:10, color:MT2, fontWeight:600 }}>{uniquePosters} members</span>
+                {totalVotes > 0 && <span style={{ fontSize:10, color:OR, fontWeight:700 }}>▲ {totalVotes}</span>}
+              </div>
+            </div>
+            <button onClick={onClose} style={{ background:"rgba(255,255,255,0.08)", border:"none", color:MT, width:28, height:28, borderRadius:"50%", cursor:"pointer", fontSize:13, fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>✕</button>
+          </div>
+
+          {/* ── Sort tabs ── */}
+          <div style={{ display:"flex", gap:2, padding:"0 14px 10px", borderBottom:`1px solid rgba(255,255,255,0.06)` }}>
+            {(["hot","new","top"] as SortMode[]).map((m) => {
+              const icons: Record<SortMode,string> = { hot:"🔥", new:"✨", top:"⬆️" };
+              const sel = sortMode === m;
+              return (
+                <button key={m} onClick={() => setSortMode(m)}
+                  style={{ display:"flex", alignItems:"center", gap:5, padding:"6px 12px", borderRadius:99, border:`1px solid ${sel ? OR : "transparent"}`, background: sel ? OR2 : "transparent", color: sel ? OR : MT, fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit", textTransform:"uppercase" as const, letterSpacing:".5px", transition:"all .15s" }}>
+                  <span style={{ fontSize:12 }}>{icons[m]}</span>{m}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Post list */}
-        <div ref={listRef} style={{ flex:1, overflowY:"auto", padding:"12px 16px 8px" }}>
+        {/* ── Post feed ── */}
+        <div style={{ flex:1, overflowY:"auto" }}>
           {loading ? (
-            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-              {[0,1,2,3].map(i => <div key={i} style={{ height:80, borderRadius:14, background:BG2, border:`1px solid ${BD}`, animation:`shimmer 1.4s ${i*0.15}s ease-in-out infinite alternate` }}/>)}
-            </div>
-          ) : posts.length === 0 ? (
-            <div style={{ textAlign:"center", padding:"48px 20px", color:MT }}>
-              <div style={{ fontSize:48, marginBottom:12 }}>💬</div>
-              <div style={{ fontSize:15, fontWeight:700, marginBottom:6 }}>No posts yet</div>
-              <div style={{ fontSize:12, color:MT2 }}>Be the first to share your thoughts!</div>
-            </div>
-          ) : (
-            posts.map((post, i) => (
-              <div key={post.id} style={{ background:BG2, border:`1px solid rgba(255,255,255,0.06)`, borderRadius:14, padding:"12px 14px", marginBottom:8, animation:`cardIn .3s ${Math.min(i*40,300)}ms cubic-bezier(.2,.7,.2,1) both` }}>
-                <div style={{ display:"flex", gap:10, marginBottom:8, alignItems:"flex-start" }}>
-                  <Avatar nickname={post.nickname} color={post.avatar_color} size={34}/>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:13, fontWeight:700, color:TX }}>{post.nickname}</div>
-                    <div style={{ fontSize:10, color:MT2, marginTop:1 }}>{formatNewsAge(post.created_at)}</div>
+            <div style={{ padding:"16px 16px 0" }}>
+              {[0,1,2,3].map(i => (
+                <div key={i} style={{ display:"flex", gap:10, padding:"14px 0", borderBottom:`1px solid rgba(255,255,255,0.05)` }}>
+                  <div className="anical-skel" style={{ width:32, height:70, borderRadius:8, flexShrink:0 }}/>
+                  <div style={{ flex:1, display:"flex", flexDirection:"column", gap:8 }}>
+                    <div className="anical-skel" style={{ height:10, width:"40%", borderRadius:4 }}/>
+                    <div className="anical-skel" style={{ height:13, width:"90%", borderRadius:4 }}/>
+                    <div className="anical-skel" style={{ height:10, width:"60%", borderRadius:4 }}/>
                   </div>
                 </div>
-                <div style={{ fontSize:14, lineHeight:1.6, color:TX, marginBottom:10, wordBreak:"break-word" as const }}>{post.message}</div>
-                <div style={{ display:"flex", gap:5, flexWrap:"wrap" as const }}>
-                  {REACTION_EMOJIS.map(emoji => {
-                    const count = post.reactions[emoji] || 0;
-                    const reacted = !!reactedMap[`${post.id}_${emoji}`];
-                    return (
-                      <button key={emoji} onClick={() => handleReact(post, emoji)}
-                        style={{ display:"flex", alignItems:"center", gap:4, padding:"3px 9px", borderRadius:99, background: reacted ? OR2 : "rgba(255,255,255,0.04)", border:`1px solid ${reacted ? OR3 : "rgba(255,255,255,0.08)"}`, cursor:"pointer", fontFamily:"inherit", transition:"all .15s" }}>
-                        <span style={{ fontSize:13 }}>{emoji}</span>
-                        {count > 0 && <span style={{ fontSize:10, fontWeight:700, color: reacted ? OR : MT }}>{count}</span>}
-                      </button>
-                    );
-                  })}
+              ))}
+            </div>
+          ) : posts.length === 0 ? (
+            <div style={{ textAlign:"center", padding:"56px 24px", color:MT }}>
+              <div style={{ fontSize:52, marginBottom:14 }}>💬</div>
+              <div style={{ fontSize:16, fontWeight:800, marginBottom:8 }}>No posts yet</div>
+              <div style={{ fontSize:13, color:MT2, marginBottom:20 }}>Be the first to post in this community!</div>
+              <button onClick={() => { setComposing(true); }} style={{ padding:"10px 24px", borderRadius:99, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>Create Post</button>
+            </div>
+          ) : (
+            sorted.map((post, i) => {
+              const votes = post.reactions["▲"] || 0;
+              const voted = !!reactedMap[`${post.id}_▲`];
+              return (
+                <div key={post.id} style={{ display:"flex", gap:0, borderBottom:`1px solid rgba(255,255,255,0.05)`, animation:`cardIn .25s ${Math.min(i*30,250)}ms both` }}>
+                  {/* Vote column */}
+                  <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2, padding:"14px 10px 14px 14px", minWidth:46 }}>
+                    <button onClick={() => handleVote(post)}
+                      style={{ background: voted ? OR2 : "rgba(255,255,255,0.05)", border:`1px solid ${voted ? OR3 : "rgba(255,255,255,0.08)"}`, color: voted ? OR : MT, width:32, height:32, borderRadius:8, cursor:"pointer", fontFamily:"inherit", fontSize:15, display:"flex", alignItems:"center", justifyContent:"center", transition:"all .15s", flexShrink:0 }}>
+                      ▲
+                    </button>
+                    <span style={{ fontSize:12, fontWeight:800, color: voted ? OR : votes > 0 ? TX : MT2, lineHeight:1 }}>{votes || 0}</span>
+                  </div>
+
+                  {/* Content */}
+                  <div style={{ flex:1, padding:"14px 14px 12px 4px", minWidth:0 }}>
+                    {/* Author */}
+                    <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:8 }}>
+                      <Avatar nickname={post.nickname} color={post.avatar_color} size={22}/>
+                      <span style={{ fontSize:12, fontWeight:700, color: post.avatar_color }}>{post.nickname}</span>
+                      <span style={{ fontSize:10, color:MT2 }}>· {formatNewsAge(post.created_at)}</span>
+                    </div>
+                    {/* Message */}
+                    <div style={{ fontSize:14, lineHeight:1.65, color:TX, wordBreak:"break-word" as const, marginBottom:10 }}>{post.message}</div>
+                    {/* Awards row */}
+                    <div style={{ display:"flex", gap:4, flexWrap:"wrap" as const }}>
+                      {REACTION_EMOJIS.map(emoji => {
+                        const count = post.reactions[emoji] || 0;
+                        const reacted = !!reactedMap[`${post.id}_${emoji}`];
+                        return (
+                          <button key={emoji} onClick={() => handleReact(post, emoji)}
+                            style={{ display:"flex", alignItems:"center", gap:3, padding:"3px 8px", borderRadius:99, background: reacted ? "rgba(255,107,26,.12)" : "rgba(255,255,255,0.04)", border:`1px solid ${reacted ? OR3 : "rgba(255,255,255,0.07)"}`, cursor:"pointer", fontFamily:"inherit", transition:"all .15s" }}>
+                            <span style={{ fontSize:12 }}>{emoji}</span>
+                            {count > 0 && <span style={{ fontSize:10, fontWeight:700, color: reacted ? OR : MT2 }}>{count}</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
+          {/* Bottom spacer */}
+          <div style={{ height:20 }}/>
         </div>
 
-        {/* Nickname picker / Compose */}
-        <div style={{ borderTop:`1px solid rgba(255,255,255,0.06)`, padding:"12px 16px 32px", flexShrink:0, background:BG }}>
+        {/* ── Compose / Nickname area ── */}
+        <div style={{ borderTop:`1px solid rgba(255,255,255,0.07)`, background:BG, flexShrink:0 } as React.CSSProperties}>
           {pickingNick ? (
-            <div>
-              <div style={{ fontSize:13, fontWeight:700, marginBottom:10, color:TX }}>Pick your community name</div>
-              <div style={{ display:"flex", flexWrap:"wrap" as const, gap:6, marginBottom:10 }}>
+            <div style={{ padding:"14px 16px 32px" }}>
+              <div style={{ fontSize:13, fontWeight:700, marginBottom:10 }}>Pick your username</div>
+              <div style={{ display:"flex", flexWrap:"wrap" as const, gap:5, marginBottom:10 }}>
                 {NICK_SUGGESTIONS.map(s => (
                   <button key={s} onClick={() => setNickDraft(s)}
-                    style={{ fontSize:11, padding:"4px 10px", borderRadius:99, border:`1px solid ${nickDraft === s ? OR : BD}`, background: nickDraft === s ? OR2 : BG3, color: nickDraft === s ? OR : MT, cursor:"pointer", fontFamily:"inherit" }}>
+                    style={{ fontSize:11, padding:"4px 10px", borderRadius:99, border:`1px solid ${nickDraft===s?OR:BD}`, background:nickDraft===s?OR2:BG3, color:nickDraft===s?OR:MT, cursor:"pointer", fontFamily:"inherit" }}>
                     {s}
                   </button>
                 ))}
               </div>
               <div style={{ display:"flex", gap:8 }}>
-                <input
-                  style={{ flex:1, background:BG3, border:`1px solid ${BD}`, borderRadius:10, padding:"9px 12px", color:TX, fontSize:13, fontFamily:"inherit", outline:"none" }}
-                  placeholder="or type your own…"
-                  value={nickDraft}
-                  onChange={e => setNickDraft(e.target.value)}
-                  maxLength={24}
-                  onKeyDown={e => e.key === "Enter" && confirmNick()}
-                />
+                <input style={{ flex:1, background:BG3, border:`1px solid ${BD}`, borderRadius:10, padding:"9px 12px", color:TX, fontSize:13, fontFamily:"inherit", outline:"none" }}
+                  placeholder="or type your own…" value={nickDraft}
+                  onChange={e => setNickDraft(e.target.value)} maxLength={24}
+                  onKeyDown={e => e.key==="Enter" && confirmNick()}/>
                 <button onClick={confirmNick} disabled={nickDraft.trim().length < 2}
-                  style={{ padding:"9px 16px", borderRadius:10, border:"none", background: nickDraft.trim().length >= 2 ? `linear-gradient(135deg, ${OR}, #cc5610)` : BG3, color: nickDraft.trim().length >= 2 ? "#fff" : MT2, fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
-                  Set
+                  style={{ padding:"9px 16px", borderRadius:10, border:"none", background:nickDraft.trim().length>=2?`linear-gradient(135deg,${OR},#cc5610)`:BG3, color:nickDraft.trim().length>=2?"#fff":MT2, fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+                  Join
                 </button>
               </div>
             </div>
+          ) : composing ? (
+            <div style={{ padding:"12px 16px 32px" }}>
+              <div style={{ display:"flex", gap:8, alignItems:"flex-start", marginBottom:8 }}>
+                <Avatar nickname={nickname} color={avatarColor} size={30}/>
+                <textarea ref={textareaRef}
+                  style={{ flex:1, background:BG3, border:`1px solid ${draft?OR3:"rgba(255,255,255,.1)"}`, borderRadius:12, padding:"10px 12px", color:TX, fontSize:14, fontFamily:"inherit", resize:"none", outline:"none", minHeight:72, maxHeight:140, lineHeight:1.55, transition:"border-color .2s" } as React.CSSProperties}
+                  autoFocus placeholder="What's your take on this show?"
+                  value={draft} onChange={e => setDraft(e.target.value.slice(0, 500))} rows={3}/>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <div style={{ fontSize:10, color:MT2 }}>
+                  Posting as <span style={{ color:avatarColor, fontWeight:700 }}>{nickname}</span>
+                  <button onClick={() => { setPickingNick(true); setNickDraft(nickname); }} style={{ marginLeft:8, fontSize:10, color:MT2, background:"none", border:"none", cursor:"pointer", fontFamily:"inherit", textDecoration:"underline", padding:0 }}>change</button>
+                </div>
+                <div style={{ display:"flex", gap:6 }}>
+                  <button onClick={() => { setComposing(false); setDraft(""); }} style={{ padding:"7px 14px", borderRadius:99, border:`1px solid ${BD}`, background:"transparent", color:MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>Cancel</button>
+                  <button onClick={handleSend} disabled={!draft.trim() || sending}
+                    style={{ padding:"7px 18px", borderRadius:99, border:"none", background:draft.trim()?`linear-gradient(135deg,${OR},#cc5610)`:BG3, color:draft.trim()?"#fff":MT2, fontSize:12, fontWeight:700, cursor:draft.trim()?"pointer":"default", fontFamily:"inherit", boxShadow:draft.trim()?`0 4px 14px rgba(255,107,26,.35)`:"none", transition:"all .18s" }}>
+                    {sending ? "Posting…" : "Post"}
+                  </button>
+                </div>
+              </div>
+            </div>
           ) : (
-            <div>
-              <div style={{ display:"flex", gap:8, alignItems:"flex-end" }}>
-                <Avatar nickname={nickname} color={avatarColor} size={32}/>
-                <textarea
-                  style={{ flex:1, background:BG2, border:`1px solid ${draft ? OR3 : "rgba(255,255,255,0.09)"}`, borderRadius:12, padding:"9px 12px", color:TX, fontSize:14, fontFamily:"inherit", resize:"none", outline:"none", minHeight:40, maxHeight:96, lineHeight:1.5, transition:"border-color .2s" } as React.CSSProperties}
-                  placeholder="Share your thoughts…"
-                  value={draft}
-                  onChange={e => setDraft(e.target.value.slice(0, 500))}
-                  rows={1}
-                />
-                <button onClick={handleSend} disabled={!draft.trim() || sending}
-                  style={{ padding:"9px 14px", borderRadius:12, border:"none", background: draft.trim() ? `linear-gradient(135deg, ${OR}, #cc5610)` : BG3, color: draft.trim() ? "#fff" : MT2, fontSize:13, fontWeight:700, cursor: draft.trim() ? "pointer" : "default", fontFamily:"inherit", boxShadow: draft.trim() ? `0 4px 14px rgba(255,107,26,.4)` : "none", transition:"all .18s", flexShrink:0 } as React.CSSProperties}>
-                  {sending ? "…" : "Send"}
-                </button>
-              </div>
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:6 }}>
-                <div style={{ fontSize:10, color:MT2 }}>Posting as <span style={{ color:avatarColor, fontWeight:700 }}>{nickname}</span></div>
-                <button onClick={() => { setPickingNick(true); setNickDraft(nickname); }} style={{ fontSize:10, color:MT2, background:"none", border:"none", cursor:"pointer", fontFamily:"inherit", textDecoration:"underline" }}>Change</button>
-              </div>
+            <div style={{ padding:"10px 16px 32px", display:"flex", gap:10, alignItems:"center" }}>
+              <Avatar nickname={nickname} color={avatarColor} size={30}/>
+              <button onClick={() => setComposing(true)}
+                style={{ flex:1, textAlign:"left" as const, background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:99, padding:"9px 16px", color:MT2, fontSize:13, cursor:"pointer", fontFamily:"inherit" }}>
+                Share your thoughts on {anime.title.split(" ").slice(0,3).join(" ")}…
+              </button>
             </div>
           )}
         </div>
@@ -962,6 +1058,8 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
       return next;
     });
   };
+
+  const [calCollapsed, setCalCollapsed] = useState(false);
   const monthDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   const [mYear, mMon] = [monthDate.getFullYear(), monthDate.getMonth()];
   const currentSeason = monthToSeason(mMon);
@@ -996,44 +1094,45 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
   return (
     <div style={{ padding:"0 16px 16px" }}>
       {/* Month nav */}
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 0" }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0 8px" }}>
         <button style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:8, padding:"6px 14px", fontSize:16, cursor:"pointer", fontFamily:"inherit" }} onClick={() => setMonthOffset((v) => v - 1)}>‹</button>
-        <div style={{ textAlign:"center" }}>
-          <span style={{ fontSize:17, fontWeight:700 }}>{MONTHS[mMon]} {mYear}</span>
-          <div style={{ fontSize:10, color:MT, marginTop:2 }}>{SEASON_EMOJI[currentSeason]} {seasonYear(currentSeason, mYear)}</div>
-        </div>
+        <button onClick={() => setCalCollapsed(v => !v)}
+          style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1, background:"none", border:"none", cursor:"pointer", fontFamily:"inherit", padding:"4px 12px" }}>
+          <span style={{ fontSize:16, fontWeight:800, color:TX, letterSpacing:"-.3px" }}>{MONTHS[mMon]} {mYear}</span>
+          <span style={{ fontSize:10, color:MT }}>{SEASON_EMOJI[currentSeason]} {seasonYear(currentSeason, mYear)} · {calCollapsed ? "show ▾" : "hide ▴"}</span>
+        </button>
         <button style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:8, padding:"6px 14px", fontSize:16, cursor:"pointer", fontFamily:"inherit" }} onClick={() => setMonthOffset((v) => v + 1)}>›</button>
       </div>
 
-      {/* Calendar grid */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, marginBottom:4 }}>
-        {["Su","Mo","Tu","We","Th","Fr","Sa"].map((d) => <div key={d} style={{ textAlign:"center", fontSize:10, fontWeight:700, color:MT, letterSpacing:".8px", padding:"4px 0", textTransform:"uppercase" }}>{d}</div>)}
-      </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, marginBottom:16 }}>
-        {cells.map((date, ci) => {
-          const inMonth = date.getMonth() === mMon;
-          const isToday = inMonth && date.toDateString() === now.toDateString();
-          const isSelected = inMonth && date.toDateString() === selectedDate.toDateString();
-          const dayIdx = (date.getDay() + 6) % 7;
-          const dayAnime = inMonth ? getFiltered(dayIdx) : [];
-          // Mark season premiere approx date (1st of season start month)
-          const isSeasonPremiere = inMonth && isSeasonStartMonth && date.getDate() === 1 && seasonUpcoming.length > 0;
-          const borderCol = isToday ? OR : isSelected ? TX : isSeasonPremiere ? "rgba(139,92,246,.6)" : dayAnime.length > 0 ? BD2 : "transparent";
-          const bgCol = inMonth ? (isToday ? `rgba(255,107,26,.12)` : isSelected ? BG3 : isSeasonPremiere ? "rgba(139,92,246,.06)" : BG2) : "transparent";
-          return (
-            <div key={ci}
-              style={{ aspectRatio:"1", borderRadius:8, border:`1px solid ${borderCol}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, cursor: inMonth ? "pointer" : "default", padding:2, background: bgCol, opacity: inMonth ? 1 : .18, transition:"background .15s, border-color .15s" }}
-              onClick={() => { if (inMonth) setSelectedDate(new Date(date)); }}
-            >
-              <div style={{ fontSize:12, fontWeight:700, color: isToday ? OR : TX, lineHeight:1 }}>{date.getDate()}</div>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:2, justifyContent:"center", maxWidth:32 }}>
-                {dayAnime.slice(0, 5).map((a, j) => <div key={j} style={{ width:5, height:5, borderRadius:"50%", background: favs.includes(a.id) ? OR : BD2 }}/>)}
-                {isSeasonPremiere && <div style={{ width:5, height:5, borderRadius:"50%", background:"rgba(139,92,246,.9)" }}/>}
+      {/* Calendar grid — collapsible */}
+      <div style={{ overflow:"hidden", maxHeight: calCollapsed ? 0 : 540, opacity: calCollapsed ? 0 : 1, transition:"max-height .38s cubic-bezier(.4,0,.2,1), opacity .22s" } as React.CSSProperties}>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3, marginBottom:3 }}>
+          {["Su","Mo","Tu","We","Th","Fr","Sa"].map((d) => <div key={d} style={{ textAlign:"center", fontSize:9, fontWeight:800, color:MT2, letterSpacing:".8px", padding:"4px 0", textTransform:"uppercase" }}>{d}</div>)}
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3, marginBottom:14 }}>
+          {cells.map((date, ci) => {
+            const inMonth = date.getMonth() === mMon;
+            const isToday = inMonth && date.toDateString() === now.toDateString();
+            const isSelected = inMonth && date.toDateString() === selectedDate.toDateString();
+            const dayIdx = (date.getDay() + 6) % 7;
+            const dayAnime = inMonth ? getFiltered(dayIdx) : [];
+            const isSeasonPremiere = inMonth && isSeasonStartMonth && date.getDate() === 1 && seasonUpcoming.length > 0;
+            const borderCol = isToday ? OR : isSelected ? "rgba(255,255,255,.55)" : isSeasonPremiere ? "rgba(139,92,246,.55)" : dayAnime.length > 0 ? BD2 : "transparent";
+            const bgCol = inMonth ? (isToday ? `rgba(255,107,26,.14)` : isSelected ? BG4 : isSeasonPremiere ? "rgba(139,92,246,.07)" : BG3) : "transparent";
+            return (
+              <div key={ci}
+                style={{ aspectRatio:"1", borderRadius:7, border:`1.5px solid ${borderCol}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, cursor: inMonth ? "pointer" : "default", padding:2, background: bgCol, opacity: inMonth ? 1 : .12, transition:"background .15s, border-color .15s" }}
+                onClick={() => { if (inMonth) setSelectedDate(new Date(date)); }}
+              >
+                <div style={{ fontSize:11, fontWeight:800, color: isToday ? OR : isSelected ? TX : inMonth ? TX : MT2, lineHeight:1 }}>{date.getDate()}</div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:1.5, justifyContent:"center", maxWidth:26 }}>
+                  {dayAnime.slice(0, 4).map((a, j) => <div key={j} style={{ width:4, height:4, borderRadius:"50%", background: favs.includes(a.id) ? OR : BD2 }}/>)}
+                  {isSeasonPremiere && <div style={{ width:4, height:4, borderRadius:"50%", background:"rgba(139,92,246,.9)" }}/>}
+                </div>
               </div>
-              {dayAnime.length > 5 && <div style={{ fontSize:9, color:MT2, fontWeight:600 }}>+{dayAnime.length - 5}</div>}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
 
       {/* ── Upcoming this season ── */}
