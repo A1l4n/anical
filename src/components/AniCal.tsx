@@ -1489,46 +1489,75 @@ export default function AniCal() {
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
         >
-          {/* Frosted glass header */}
-          <div style={{ position:"sticky", top:0, zIndex:50, background:`rgba(9,9,15,0.88)`, backdropFilter:"blur(24px) saturate(1.4)", borderBottom:`1px solid rgba(37,37,51,0.8)`, padding:"14px 16px 12px" } as React.CSSProperties}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, fontSize:20, fontWeight:800, letterSpacing:"-0.5px" }}>
-                <StarLogo size={26}/>
-                Ani<span style={{ color:OR }}>Cal</span>
+          {/* ── Premium Header ── */}
+          <div style={{ position:"sticky", top:0, zIndex:50, background:"rgba(9,9,15,0.82)", backdropFilter:"blur(32px) saturate(1.6)", borderBottom:"1px solid rgba(255,255,255,0.055)" } as React.CSSProperties}>
+            {/* Brand row */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 16px 10px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                <div style={{ width:32, height:32, borderRadius:10, background:`linear-gradient(135deg, ${OR} 0%, #e05010 100%)`, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 4px 14px rgba(255,107,26,.38)` }}>
+                  <svg width={17} height={17} viewBox="0 0 26 26" fill="none">
+                    <path d="M13 3.5l2.2 6.3h6.6l-5.3 3.9 2 6.3L13 16.2l-5.5 3.8 2-6.3L4.2 9.8h6.6L13 3.5z" fill="#fff"/>
+                  </svg>
+                </div>
+                <div style={{ lineHeight:1 }}>
+                  <span style={{ fontSize:19, fontWeight:900, letterSpacing:"-0.8px", color:TX }}>Ani</span><span style={{ fontSize:19, fontWeight:900, letterSpacing:"-0.8px", color:OR }}>Cal</span>
+                </div>
               </div>
-              <div style={{ display:"flex", gap:8 }}>
+              <div style={{ display:"flex", gap:7, alignItems:"center" }}>
+                {/* Favs filter pill */}
                 <button
-                  style={{ background: favFilter ? OR2 : BG3, border:`1px solid ${favFilter ? OR3 : BD}`, color: favFilter ? OR : MT, borderRadius:10, padding:"7px 13px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit", transition:"all .15s" }}
                   onClick={() => setFavFilter((v) => !v)}
-                >★ Favs</button>
+                  style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 12px", borderRadius:20, border:`1px solid ${favFilter ? OR : "rgba(255,255,255,0.1)"}`, background: favFilter ? `linear-gradient(135deg, ${OR2}, rgba(255,107,26,0.12))` : "rgba(255,255,255,0.05)", color: favFilter ? OR : MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", transition:"all .18s", boxShadow: favFilter ? `0 0 12px rgba(255,107,26,.25)` : "none", letterSpacing:".3px" } as React.CSSProperties}
+                >
+                  <span style={{ fontSize:13 }}>{favFilter ? "★" : "☆"}</span>
+                  <span>Favs</span>
+                </button>
+                {/* Refresh icon button */}
                 <button
-                  style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:10, padding:"7px 13px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}
                   onClick={() => loadSchedule(true)}
+                  style={{ width:34, height:34, borderRadius:"50%", border:"1px solid rgba(255,255,255,0.1)", background:"rgba(255,255,255,0.05)", color:MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s" } as React.CSSProperties}
                 >↻</button>
               </div>
             </div>
-          </div>
 
-          {/* Search */}
-          <div style={{ padding:"10px 16px 0" }}>
-            <input
-              style={{ width:"100%", background:BG3, border:`1px solid ${BD}`, borderRadius:10, padding:"10px 14px", color:TX, fontSize:14, fontFamily:"inherit", outline:"none", boxSizing:"border-box" }}
-              placeholder="Search anime…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+            {/* Search bar */}
+            <div style={{ padding:"0 16px 10px", position:"relative" } as React.CSSProperties}>
+              <div style={{ position:"absolute", left:28, top:"50%", transform:"translateY(-50%)", pointerEvents:"none", color:MT2, fontSize:14, display:"flex" }}>
+                <svg width={15} height={15} viewBox="0 0 20 20" fill="none" style={{ opacity:.5 }}>
+                  <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="1.8"/>
+                  <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+                </svg>
+              </div>
+              <input
+                style={{ width:"100%", background:"rgba(255,255,255,0.06)", border:`1px solid ${search ? "rgba(255,107,26,0.35)" : "rgba(255,255,255,0.09)"}`, borderRadius:14, padding:"10px 36px 10px 36px", color:TX, fontSize:14, fontFamily:"inherit", outline:"none", boxSizing:"border-box", transition:"border-color .2s", letterSpacing:".1px" } as React.CSSProperties}
+                placeholder="Search anime…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  style={{ position:"absolute", right:28, top:"50%", transform:"translateY(-50%)", background:"rgba(255,255,255,0.12)", border:"none", color:MT, width:20, height:20, borderRadius:"50%", cursor:"pointer", fontSize:10, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"inherit" } as React.CSSProperties}
+                >✕</button>
+              )}
+            </div>
 
-          {/* Auto timezone + last updated */}
-          {lastUpdated && (
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8, padding:"6px 16px 0" }}>
-              <div style={{ fontSize:10, color:MT, display:"flex", alignItems:"center", gap:4 }}>
-                <span>🌐</span>
+            {/* Status line */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 16px 10px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:5, fontSize:9.5, color:"rgba(255,255,255,0.22)", fontWeight:500, letterSpacing:".3px" }}>
+                <span style={{ fontSize:10 }}>🌐</span>
                 <span>{getDeviceTz().replace(/_/g, " ")}</span>
               </div>
-              <div style={{ fontSize:10, color:MT2 }}>Updated {lastUpdated.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}</div>
+              {lastUpdated && (
+                <div style={{ fontSize:9.5, color:"rgba(255,255,255,0.2)", fontWeight:500, letterSpacing:".3px" }}>
+                  Updated {lastUpdated.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" })}
+                </div>
+              )}
             </div>
-          )}
+
+            {/* Bottom fade edge */}
+            <div style={{ position:"absolute", bottom:-18, left:0, right:0, height:18, background:"linear-gradient(to bottom, rgba(9,9,15,0.35), transparent)", pointerEvents:"none" } as React.CSSProperties}/>
+          </div>
 
           {/* Pull-to-refresh indicator */}
           <PullIndicator visible={pullVisible} spinning={refreshing}/>
