@@ -207,7 +207,7 @@ async function fetchAnnNews(): Promise<NewsItem[]> {
       id: el.querySelector("guid")?.textContent || Math.random().toString(),
       title: el.querySelector("title")?.textContent?.trim() || "",
       date: el.querySelector("pubDate")?.textContent || undefined,
-      excerpt: raw.replace(/<[^>]+>/g, "").trim().slice(0, 180) || undefined,
+      excerpt: raw.replace(/<[^>]+>/g, "").trim().slice(0, 500) || undefined,
       url: el.querySelector("link")?.textContent?.trim() || "",
       source: "ANN" as const,
     };
@@ -258,7 +258,7 @@ async function fetchAnimeNewsItems(anime: Anime): Promise<NewsItem[]> {
     id: `mal-${n.mal_id}`,
     title: n.title,
     date: n.date,
-    excerpt: (n.excerpt || "").replace(/<[^>]+>/g, "").slice(0, 180),
+    excerpt: (n.excerpt || "").replace(/<[^>]+>/g, "").slice(0, 500),
     url: n.url,
     source: "MAL" as const,
     imageUrl: n.images?.jpg?.image_url || null,
@@ -1303,27 +1303,96 @@ function UpcomingCard({ anime, starred, onToggle, onOpen, delay = 0 }: { anime: 
 }
 
 // ── News card ──────────────────────────────────────────────────────────────────
-function NewsCard({ item, delay = 0 }: { item: NewsItem; delay?: number }) {
+function NewsCard({ item, delay = 0, onOpen }: { item: NewsItem; delay?: number; onOpen: (n: NewsItem) => void }) {
   const age = formatNewsAge(item.date);
   return (
     <div
       className="anical-card"
-      onClick={() => openUrl(item.url)}
+      onClick={() => onOpen(item)}
       style={{ display:"flex", gap:10, padding:12, background:BG2, border:`1px solid ${BD}`, borderRadius:14, cursor:"pointer", marginBottom:8, overflow:"hidden", animation:`cardIn .4s ${delay}ms cubic-bezier(.2,.7,.2,1) both`, transition:"transform .15s" }}
     >
-      {item.imageUrl && (
-        <img src={item.imageUrl} alt="" loading="lazy" style={{ width:68, height:68, borderRadius:8, objectFit:"cover", flexShrink:0, background:BG4 }}/>
-      )}
+      {item.imageUrl
+        ? <img src={item.imageUrl} alt="" loading="lazy" style={{ width:72, height:72, borderRadius:10, objectFit:"cover", flexShrink:0, background:BG4 }}/>
+        : <div style={{ width:72, height:72, borderRadius:10, background:BG4, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0, color:MT2 }}>📰</div>}
       <div style={{ flex:1, minWidth:0 }}>
         <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:5, flexWrap:"wrap" as const }}>
           <span style={{ fontSize:9, fontWeight:800, padding:"2px 6px", borderRadius:4, background:item.source==="ANN"?OR2:BG3, color:item.source==="ANN"?OR:MT, border:`1px solid ${item.source==="ANN"?OR3:BD}`, textTransform:"uppercase" as const, letterSpacing:".5px" }}>{item.source}</span>
-          {item.animeTitle && <span style={{ fontSize:10, color:OR, fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const, maxWidth:120 }}>{item.animeTitle}</span>}
+          {item.animeTitle && <span style={{ fontSize:10, color:OR, fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const, maxWidth:110 }}>{item.animeTitle}</span>}
           {age && <span style={{ fontSize:10, color:MT2, marginLeft:"auto", flexShrink:0 }}>{age}</span>}
         </div>
-        <div style={{ fontSize:13, fontWeight:700, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, marginBottom:4 }}>{item.title}</div>
+        <div style={{ fontSize:13, fontWeight:700, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, marginBottom:5 }}>{item.title}</div>
         {item.excerpt && <div style={{ fontSize:11, color:MT, lineHeight:1.5, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const }}>{item.excerpt}</div>}
+        <div style={{ marginTop:5, fontSize:10, color:MT2, display:"flex", alignItems:"center", gap:3 }}>
+          <span>Tap to expand</span><span style={{ fontSize:9 }}>›</span>
+        </div>
       </div>
     </div>
+  );
+}
+
+// ── News detail sheet ──────────────────────────────────────────────────────────
+function NewsDetailSheet({ item, onClose }: { item: NewsItem; onClose: () => void }) {
+  const age = formatNewsAge(item.date);
+  const isANN = item.source === "ANN";
+  return (
+    <>
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.84)", zIndex:200, backdropFilter:"blur(8px)" } as React.CSSProperties} onClick={onClose}/>
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"90vh", overflowY:"auto", zIndex:201, animation:"sheetUp .3s cubic-bezier(.2,.7,.2,1)" }}>
+        <div style={{ width:36, height:4, background:BD2, borderRadius:2, margin:"14px auto 0" }}/>
+
+        {/* Hero image */}
+        {item.imageUrl ? (
+          <div style={{ position:"relative", margin:"14px 0 0", height:200, overflow:"hidden" }}>
+            <img src={item.imageUrl} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}/>
+            <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, transparent 45%, rgba(17,17,25,.95))" }}/>
+            {/* Source badge over image */}
+            <div style={{ position:"absolute", top:12, left:16 }}>
+              <span style={{ fontSize:9, fontWeight:800, padding:"3px 8px", borderRadius:4, background: isANN ? OR : BG4, color: isANN ? "#fff" : MT, border:`1px solid ${isANN ? OR : BD}`, textTransform:"uppercase" as const, letterSpacing:".8px", backdropFilter:"blur(8px)" }}>{item.source}</span>
+            </div>
+          </div>
+        ) : (
+          <div style={{ height:8 }}/>
+        )}
+
+        <div style={{ padding: item.imageUrl ? "0 20px 48px" : "16px 20px 48px" }}>
+          {/* Meta row */}
+          <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" as const, marginBottom:12, marginTop: item.imageUrl ? -4 : 0 }}>
+            {!item.imageUrl && <span style={{ fontSize:9, fontWeight:800, padding:"3px 8px", borderRadius:4, background:isANN?OR2:BG3, color:isANN?OR:MT, border:`1px solid ${isANN?OR3:BD}`, textTransform:"uppercase" as const, letterSpacing:".6px" }}>{item.source}</span>}
+            {item.animeTitle && (
+              <span style={{ fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:99, background:OR2, color:OR, border:`1px solid ${OR3}` }}>{item.animeTitle}</span>
+            )}
+            {age && <span style={{ fontSize:10, color:MT2, marginLeft:"auto" }}>{age}</span>}
+          </div>
+
+          {/* Title */}
+          <div style={{ fontSize:20, fontWeight:800, lineHeight:1.3, color:TX, marginBottom:16 }}>{item.title}</div>
+
+          {/* Divider */}
+          <div style={{ height:1, background:BD, marginBottom:16 }}/>
+
+          {/* Full excerpt */}
+          {item.excerpt ? (
+            <div style={{ fontSize:14, lineHeight:1.8, color:"rgba(242,242,250,.8)", marginBottom:28, whiteSpace:"pre-wrap" as const }}>{item.excerpt}</div>
+          ) : (
+            <div style={{ fontSize:13, color:MT2, marginBottom:28, fontStyle:"italic" as const }}>No preview available — open the full article to read.</div>
+          )}
+
+          {/* CTA button */}
+          <button
+            onClick={() => openUrl(item.url)}
+            style={{ width:"100%", padding:"14px 20px", borderRadius:12, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:15, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:`0 8px 24px -6px rgba(255,107,26,.5)` } as React.CSSProperties}
+          >
+            <span>Read Full Article</span>
+            <span style={{ fontSize:16 }}>↗</span>
+          </button>
+
+          {/* Source label */}
+          <div style={{ textAlign:"center", fontSize:10, color:MT2, marginTop:10 }}>
+            via {item.source === "ANN" ? "Anime News Network" : "MyAnimeList"}
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -1331,7 +1400,7 @@ function NewsCard({ item, delay = 0 }: { item: NewsItem; delay?: number }) {
 function NewsSkeleton() {
   return (
     <div style={{ display:"flex", gap:10, padding:12, background:BG2, border:`1px solid ${BD}`, borderRadius:14, marginBottom:8 }}>
-      <div className="anical-skel" style={{ width:68, height:68, borderRadius:8, flexShrink:0 }}/>
+      <div className="anical-skel" style={{ width:72, height:72, borderRadius:10, flexShrink:0 }}/>
       <div style={{ flex:1, display:"flex", flexDirection:"column", gap:7, justifyContent:"center" }}>
         <div className="anical-skel" style={{ height:11, borderRadius:4, width:"20%" }}/>
         <div className="anical-skel" style={{ height:13, borderRadius:4, width:"88%" }}/>
@@ -1500,6 +1569,7 @@ function NewsView({ favAnime }: { favAnime: any[] }) {
   const [annLoading, setAnnLoading] = useState(true);
   const [favLoading, setFavLoading] = useState(true);
   const [annError, setAnnError] = useState(false);
+  const [detailNews, setDetailNews] = useState<NewsItem | null>(null);
 
   const loadAnn = () => {
     setAnnLoading(true); setAnnError(false);
@@ -1548,7 +1618,7 @@ function NewsView({ favAnime }: { favAnime: any[] }) {
           <SectionHeader emoji="⭐" title="Your Shows" count={favNews.length} accent/>
           {favLoading ? [0,1,2].map((i) => <NewsSkeleton key={i}/>) :
            favNews.length === 0 ? <div style={{ textAlign:"center", padding:"20px 0", color:MT, fontSize:13 }}>No recent news for your shows.</div> :
-           favNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 25}/>)}
+           favNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 25} onOpen={setDetailNews}/>)}
         </div>
       )}
 
@@ -1563,8 +1633,11 @@ function NewsView({ favAnime }: { favAnime: any[] }) {
              <button onClick={loadAnn} style={{ background:BG3, border:`1px solid ${OR}`, color:OR, borderRadius:8, padding:"7px 16px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Retry</button>
            </div>
          ) :
-         annNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 20}/>)}
+         annNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 20} onOpen={setDetailNews}/>)}
       </div>
+
+      {/* ── News detail sheet ── */}
+      {detailNews && <NewsDetailSheet item={detailNews} onClose={() => setDetailNews(null)}/>}
     </div>
   );
 }
