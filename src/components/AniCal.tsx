@@ -9,14 +9,6 @@ function openUrl(url: string) {
   window.open(url, IS_NATIVE ? "_system" : "_blank");
 }
 
-// Dynamic import so haptics never blocks app startup or crashes the bridge
-async function haptic() {
-  if (!IS_NATIVE) return;
-  try {
-    const { Haptics, ImpactStyle } = await import("@capacitor/haptics");
-    await Haptics.impact({ style: ImpactStyle.Light });
-  } catch {}
-}
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] as const;
@@ -966,7 +958,6 @@ export default function AniCal() {
   }, []);
 
   const toggleFav = useCallback((id: number) => {
-    haptic();
     setFavs((prev) => {
       const adding = !prev.includes(id);
       showToast(adding ? "Added to favorites ★" : "Removed from favorites");
