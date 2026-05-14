@@ -3,8 +3,17 @@
     <cloud-backup>
         <include domain="sharedpref" path="." />
         <exclude domain="sharedpref" path="WebViewChromiumPrefs.xml" />
+        <include domain="database" path="." />
+        <include domain="file" path="app_webview/Default/Local Storage" />
+        <include domain="file" path="app_webview/Default/IndexedDB" />
+        <exclude domain="file" path="app_webview/Default/Code Cache" />
+        <exclude domain="file" path="app_webview/Default/GPUCache" />
+        <exclude domain="file" path="app_webview/Default/Cache" />
     </cloud-backup>
     <device-transfer>
         <include domain="sharedpref" path="." />
+        <include domain="database" path="." />
+        <include domain="file" path="app_webview/Default/Local Storage" />
+        <include domain="file" path="app_webview/Default/IndexedDB" />
     </device-transfer>
 </data-extraction-rules>

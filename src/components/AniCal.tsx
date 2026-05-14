@@ -385,7 +385,7 @@ function LoadingView({ progress, msg }: { progress: number; msg: string }) {
 }
 
 // ── Anime card ─────────────────────────────────────────────────────────────────
-function AnimeCard({ anime, favorites, onOpen, onToggleFav, selectedDayIdx, todayDayIdx, tz, animDelay = 0 }: {
+function AnimeCard({ anime, favorites, onOpen, onToggleFav, selectedDayIdx, todayDayIdx, tz, animDelay = 0, tick = 0 }: {
   anime: Anime;
   favorites: number[];
   onOpen: (a: Anime) => void;
@@ -394,24 +394,28 @@ function AnimeCard({ anime, favorites, onOpen, onToggleFav, selectedDayIdx, toda
   todayDayIdx: number;
   tz: string;
   animDelay?: number;
+  tick?: number;
 }) {
+  void tick;
   const isFav = favorites.includes(anime.id);
   const [imgFailed, setImgFailed] = useState(false);
   const now = new Date();
-  let isNow = false;
-  if (anime.broadcast_time && selectedDayIdx === todayDayIdx) {
-    const [h, m] = anime.broadcast_time.split(":").map(Number);
-    const utcMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h - 9, m);
-    const diff = (utcMs - now.getTime()) / 60_000;
-    isNow = diff > -30 && diff <= 0;
-  }
+  const nextDate = nextJstAiringDate(anime.broadcast_day, anime.broadcast_time);
+  const countdown = nextDate ? formatCountdown(nextDate, now) : null;
+  const diffMs = nextDate ? nextDate.getTime() - now.getTime() : null;
+  const isLive = diffMs !== null && diffMs < 0 && diffMs > -30 * 60_000;
+  const isSoon = diffMs !== null && diffMs > 0 && diffMs < 3600_000;
   const localTime = jstToLocal(anime.broadcast_time, tz);
+
+  const borderColor = isFav ? OR3 : isLive ? "rgba(34,197,94,.45)" : BD;
+  const cardBg = isFav ? `rgba(255,107,26,.06)` : isLive ? "rgba(34,197,94,.05)" : BG2;
+
   return (
     <div
       className="anical-card"
       style={{
-        background: isFav ? `rgba(255,107,26,.07)` : BG2,
-        border:`1px solid ${isFav ? OR3 : isNow ? "rgba(34,197,94,.35)" : BD}`,
+        background: cardBg,
+        border:`1px solid ${borderColor}`,
         borderRadius:14, display:"flex", gap:12, padding:12, marginBottom:8,
         cursor:"pointer", position:"relative", overflow:"hidden",
         transition:"transform .15s, box-shadow .2s",
@@ -420,7 +424,7 @@ function AnimeCard({ anime, favorites, onOpen, onToggleFav, selectedDayIdx, toda
       }}
       onClick={() => onOpen(anime)}
     >
-      {isNow && <div className="anical-pulse" style={{ position:"absolute", top:10, right:10, width:8, height:8, borderRadius:"50%", background:GR }}/>}
+      {isLive && <div className="anical-pulse" style={{ position:"absolute", top:10, right:40, width:7, height:7, borderRadius:"50%", background:GR }}/>}
       <div style={{ position:"relative", flexShrink:0, width:72, height:100, borderRadius:8, overflow:"hidden", background:BG4 }}>
         {anime.image_url && !imgFailed
           ? <img src={anime.image_url} alt="" loading="lazy" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} onError={() => setImgFailed(true)}/>
@@ -428,17 +432,29 @@ function AnimeCard({ anime, favorites, onOpen, onToggleFav, selectedDayIdx, toda
         <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, transparent 45%, rgba(0,0,0,.72))" }}/>
         {anime.score && <div style={{ position:"absolute", bottom:4, left:0, right:0, textAlign:"center", fontSize:10, fontWeight:800, color:"#fff", textShadow:"0 1px 4px rgba(0,0,0,.9)" }}>★ {anime.score}</div>}
       </div>
-      <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:5, justifyContent:"center" }}>
-        <div style={{ fontSize:14, fontWeight:700, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const }}>{anime.title}</div>
+      <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:4, justifyContent:"center" }}>
+        <div style={{ fontSize:15, fontWeight:700, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const }}>{anime.title}</div>
         <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" as const }}>
           {anime.episodes && <span style={{ fontSize:11, color:MT, background:BG4, padding:"2px 7px", borderRadius:6, fontWeight:600 }}>{anime.episodes} eps</span>}
           {anime.genres?.[0] && <span style={{ fontSize:10, color:MT, background:BG3, padding:"2px 7px", borderRadius:99 }}>{anime.genres[0]}</span>}
         </div>
         {anime.broadcast_time && (
-          <div style={{ fontSize:12, fontWeight:600, color:TX, display:"flex", alignItems:"center", gap:4, marginTop:2 }}>
-            <span>{anime.broadcast_time}</span>
-            <span style={{ fontSize:10, color:MT, fontWeight:400 }}>JST</span>
-            {localTime && <span style={{ fontSize:11, color:OR, fontWeight:600 }}>→ {localTime}</span>}
+          <div style={{ fontSize:11, color:MT2, display:"flex", alignItems:"center", gap:4, marginTop:1 }}>
+            <span>{anime.broadcast_time} JST</span>
+            {localTime && <><span style={{ opacity:.4 }}>·</span><span style={{ color:OR, fontWeight:600 }}>{localTime}</span></>}
+          </div>
+        )}
+        {countdown && (
+          <div style={{ display:"inline-flex", alignItems:"center", gap:5, marginTop:2 }}>
+            <span style={{
+              fontSize:11, fontWeight:800, padding:"3px 9px", borderRadius:99,
+              background: isLive ? "rgba(34,197,94,.15)" : isSoon ? OR2 : BG3,
+              color: isLive ? GR : isSoon ? OR : MT,
+              border:`1px solid ${isLive ? "rgba(34,197,94,.3)" : isSoon ? OR3 : BD}`,
+              letterSpacing:".2px",
+            }}>
+              {isLive ? "● LIVE NOW" : countdown}
+            </span>
           </div>
         )}
       </div>
@@ -500,7 +516,7 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, tz }: { anime: An
 }
 
 // ── Schedule view ──────────────────────────────────────────────────────────────
-function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavRef, schedule, favs, favFilter, search, tz, onOpen, onToggleFav }: {
+function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavRef, schedule, favs, favFilter, search, tz, onOpen, onToggleFav, tick }: {
   anime: Anime[];
   selectedDay: number;
   setSelectedDay: (d: number) => void;
@@ -513,6 +529,7 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
   tz: string;
   onOpen: (a: Anime) => void;
   onToggleFav: (id: number) => void;
+  tick: number;
 }) {
   const today = new Date();
   const swipeStartX = useRef(0);
@@ -611,7 +628,7 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
                   <div style={{ flex:1, height:1, background:BD }}/>
                 </div>
                 {items.map((a, idx) => (
-                  <AnimeCard key={a.id} anime={a} favorites={favs} selectedDayIdx={selectedDay} todayDayIdx={todayDayIdx} tz={tz} onOpen={onOpen} onToggleFav={onToggleFav} animDelay={idx * 30}/>
+                  <AnimeCard key={a.id} anime={a} favorites={favs} selectedDayIdx={selectedDay} todayDayIdx={todayDayIdx} tz={tz} onOpen={onOpen} onToggleFav={onToggleFav} animDelay={idx * 30} tick={tick}/>
                 ))}
               </div>
             );
@@ -635,8 +652,9 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
   onToggleFav: (id: number) => void;
   todayDayIdx: number;
 }) {
-  const [selectedMonthDay, setSelectedMonthDay] = useState(todayDayIdx);
   const now = new Date();
+  const [selectedDate, setSelectedDate] = useState<Date>(now);
+  const selectedDayIdx = (selectedDate.getDay() + 6) % 7;
   const monthDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
   const [mYear, mMon] = [monthDate.getFullYear(), monthDate.getMonth()];
   const firstDow = monthDate.getDay();
@@ -654,7 +672,7 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
     return list.sort((a, b) => (a.broadcast_time || "").localeCompare(b.broadcast_time || ""));
   };
 
-  const selectedAnime = getFiltered(selectedMonthDay);
+  const selectedAnime = getFiltered(selectedDayIdx);
   const groups: Record<string, Anime[]> = {};
   selectedAnime.forEach((a) => { const k = a.broadcast_time || "?"; if (!groups[k]) groups[k] = []; groups[k].push(a); });
 
@@ -671,15 +689,18 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
       <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, marginBottom:20 }}>
         {cells.map((date, ci) => {
           const inMonth = date.getMonth() === mMon;
-          const isToday = inMonth && date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+          const isToday = inMonth && date.toDateString() === now.toDateString();
+          const isSelected = inMonth && date.toDateString() === selectedDate.toDateString();
           const dayIdx = (date.getDay() + 6) % 7;
           const dayAnime = inMonth ? getFiltered(dayIdx) : [];
+          const borderCol = isToday ? OR : isSelected ? TX : dayAnime.length > 0 ? BD2 : "transparent";
+          const bgCol = inMonth ? (isToday ? `rgba(255,107,26,.12)` : isSelected ? BG3 : BG2) : "transparent";
           return (
             <div key={ci}
-              style={{ aspectRatio:"1", borderRadius:8, border:`1px solid ${isToday ? OR : dayAnime.length > 0 ? BD2 : "transparent"}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, cursor: dayAnime.length > 0 ? "pointer" : "default", padding:2, background: inMonth ? (isToday ? `rgba(255,107,26,.12)` : BG2) : "transparent", opacity: inMonth ? 1 : .2, transition:"background .15s" }}
-              onClick={() => inMonth && setSelectedMonthDay(dayIdx)}
+              style={{ aspectRatio:"1", borderRadius:8, border:`1px solid ${borderCol}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, cursor: inMonth ? "pointer" : "default", padding:2, background: bgCol, opacity: inMonth ? 1 : .18, transition:"background .15s, border-color .15s" }}
+              onClick={() => { if (inMonth) setSelectedDate(new Date(date)); }}
             >
-              <div style={{ fontSize:12, fontWeight:700, color: isToday ? OR : TX, lineHeight:1 }}>{date.getDate()}</div>
+              <div style={{ fontSize:12, fontWeight:700, color: isToday ? OR : isSelected ? TX : TX, lineHeight:1 }}>{date.getDate()}</div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:2, justifyContent:"center", maxWidth:32 }}>
                 {dayAnime.slice(0, 6).map((a, j) => <div key={j} style={{ width:5, height:5, borderRadius:"50%", background: favs.includes(a.id) ? OR : BD2 }}/>)}
               </div>
@@ -689,7 +710,10 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
         })}
       </div>
       <div style={{ borderTop:`1px solid ${BD}`, paddingTop:12 }}>
-        <div style={{ fontSize:15, fontWeight:700, marginBottom:12 }}>{DAY_SHORT[selectedMonthDay]}'s Anime ({selectedAnime.length})</div>
+        <div style={{ fontSize:15, fontWeight:700, marginBottom:12 }}>
+          {selectedDate.toLocaleDateString([], { day:"numeric", month:"short" })}
+          <span style={{ fontWeight:400, color:MT, marginLeft:6 }}>— {DAY_SHORT[selectedDayIdx]}'s schedule ({selectedAnime.length})</span>
+        </div>
         {selectedAnime.length === 0 ? (
           <div style={{ textAlign:"center", padding:"32px 20px", color:MT, display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
             <div style={{ fontSize:36 }}>📭</div>
@@ -705,7 +729,7 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
                 <div style={{ flex:1, height:1, background:BD }}/>
               </div>
               {items.map((a, idx) => (
-                <AnimeCard key={a.id} anime={a} favorites={favs} selectedDayIdx={selectedMonthDay} todayDayIdx={todayDayIdx} tz={tz} onOpen={onOpen} onToggleFav={onToggleFav} animDelay={idx * 25}/>
+                <AnimeCard key={a.id} anime={a} favorites={favs} selectedDayIdx={selectedDayIdx} todayDayIdx={todayDayIdx} tz={tz} onOpen={onOpen} onToggleFav={onToggleFav} animDelay={idx * 25}/>
               ))}
             </div>
           ))
@@ -1515,23 +1539,28 @@ export default function AniCal() {
                 </div>
               </div>
               <div style={{ display:"flex", gap:7, alignItems:"center" }}>
-                {/* Favs filter pill */}
-                <button
-                  onClick={() => setFavFilter((v) => !v)}
-                  style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 12px", borderRadius:20, border:`1px solid ${favFilter ? OR : "rgba(255,255,255,0.1)"}`, background: favFilter ? `linear-gradient(135deg, ${OR2}, rgba(255,107,26,0.12))` : "rgba(255,255,255,0.05)", color: favFilter ? OR : MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", transition:"all .18s", boxShadow: favFilter ? `0 0 12px rgba(255,107,26,.25)` : "none", letterSpacing:".3px" } as React.CSSProperties}
-                >
-                  <span style={{ fontSize:13 }}>{favFilter ? "★" : "☆"}</span>
-                  <span>Favs</span>
-                </button>
-                {/* Refresh icon button */}
-                <button
-                  onClick={() => loadSchedule(true)}
-                  style={{ width:34, height:34, borderRadius:"50%", border:"1px solid rgba(255,255,255,0.1)", background:"rgba(255,255,255,0.05)", color:MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s" } as React.CSSProperties}
-                >↻</button>
+                {/* Favs filter — only on schedule/calendar */}
+                {(view === "schedule" || view === "month") && (
+                  <button
+                    onClick={() => setFavFilter((v) => !v)}
+                    style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 12px", borderRadius:20, border:`1px solid ${favFilter ? OR : "rgba(255,255,255,0.1)"}`, background: favFilter ? `linear-gradient(135deg, ${OR2}, rgba(255,107,26,0.12))` : "rgba(255,255,255,0.05)", color: favFilter ? OR : MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", transition:"all .18s", boxShadow: favFilter ? `0 0 12px rgba(255,107,26,.25)` : "none", letterSpacing:".3px" } as React.CSSProperties}
+                  >
+                    <span style={{ fontSize:13 }}>{favFilter ? "★" : "☆"}</span>
+                    <span>Favs</span>
+                  </button>
+                )}
+                {/* Refresh — only on schedule/calendar */}
+                {(view === "schedule" || view === "month") && (
+                  <button
+                    onClick={() => loadSchedule(true)}
+                    style={{ width:34, height:34, borderRadius:"50%", border:"1px solid rgba(255,255,255,0.1)", background:"rgba(255,255,255,0.05)", color:MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s" } as React.CSSProperties}
+                  >↻</button>
+                )}
               </div>
             </div>
 
-            {/* Search bar */}
+            {/* Search bar — only on schedule/calendar */}
+            {(view === "schedule" || view === "month") && (
             <div style={{ padding:"0 16px 10px", position:"relative" } as React.CSSProperties}>
               <div style={{ position:"absolute", left:28, top:"50%", transform:"translateY(-50%)", pointerEvents:"none", color:MT2, fontSize:14, display:"flex" }}>
                 <svg width={15} height={15} viewBox="0 0 20 20" fill="none" style={{ opacity:.5 }}>
@@ -1552,6 +1581,7 @@ export default function AniCal() {
                 >✕</button>
               )}
             </div>
+            )}
 
             {/* Status line */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 16px 10px" }}>
@@ -1589,6 +1619,7 @@ export default function AniCal() {
                 tz={tz}
                 onOpen={setDetailAnime}
                 onToggleFav={toggleFav}
+                tick={tick}
               />
             )}
             {view === "month" && (

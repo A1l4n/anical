@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
-    <!-- Back up favorites, timezone, and notification settings -->
+    <!-- User data: native SharedPreferences -->
     <include domain="sharedpref" path="." />
     <exclude domain="sharedpref" path="WebViewChromiumPrefs.xml" />
+    <!-- WebView localStorage (Capacitor stores favorites/stars/settings here) -->
+    <include domain="database" path="." />
+    <include domain="file" path="app_webview/Default/Local Storage" />
+    <include domain="file" path="app_webview/Default/IndexedDB" />
+    <!-- Exclude cache / GPU artifacts to keep backup small -->
+    <exclude domain="file" path="app_webview/Default/Code Cache" />
+    <exclude domain="file" path="app_webview/Default/GPUCache" />
+    <exclude domain="file" path="app_webview/Default/Cache" />
 </full-backup-content>
