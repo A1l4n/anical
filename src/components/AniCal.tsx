@@ -177,18 +177,23 @@ async function fetchUpcoming(): Promise<UpcomingAnime[]> {
   const res = await fetch("https://api.jikan.moe/v4/seasons/upcoming?limit=25");
   if (!res.ok) return [];
   const json = await res.json();
-  return (json.data || []).map((a: any) => ({
-    id: a.mal_id,
-    title: a.title_english || a.title || "Untitled",
-    imageUrl: a.images?.webp?.image_url || a.images?.jpg?.image_url || null,
-    season: a.season,
-    year: a.year,
-    genres: (a.genres || []).map((g: any) => g.name),
-    episodes: a.episodes,
-    synopsis: a.synopsis ? a.synopsis.slice(0, 200) : null,
-    studios: (a.studios || []).map((s: any) => s.name),
-    mal_url: a.url,
-  }));
+  const seen = new Set<number>();
+  return (json.data || []).flatMap((a: any) => {
+    if (seen.has(a.mal_id)) return [];
+    seen.add(a.mal_id);
+    return [{
+      id: a.mal_id,
+      title: a.title_english || a.title || "Untitled",
+      imageUrl: a.images?.webp?.image_url || a.images?.jpg?.image_url || null,
+      season: a.season,
+      year: a.year,
+      genres: (a.genres || []).map((g: any) => g.name),
+      episodes: a.episodes,
+      synopsis: a.synopsis ? a.synopsis.slice(0, 200) : null,
+      studios: (a.studios || []).map((s: any) => s.name),
+      mal_url: a.url,
+    }];
+  });
 }
 
 async function fetchAnimeNewsItems(anime: Anime): Promise<NewsItem[]> {
@@ -832,16 +837,11 @@ function NewsSkeleton() {
   );
 }
 
-// ── News view ──────────────────────────────────────────────────────────────────
-function NewsView({ favAnime }: { favAnime: any[] }) {
-  const [annNews, setAnnNews] = useState<NewsItem[]>([]);
-  const [favNews, setFavNews] = useState<NewsItem[]>([]);
+// ── Upcoming view ──────────────────────────────────────────────────────────────
+function UpcomingView() {
   const [upcoming, setUpcoming] = useState<UpcomingAnime[]>([]);
   const [upcomingStars, setUpcomingStars] = useState<number[]>(() => LS.get<number[]>("anical_upcoming_stars", []));
-  const [annLoading, setAnnLoading] = useState(true);
-  const [favLoading, setFavLoading] = useState(true);
   const [upcomingLoading, setUpcomingLoading] = useState(true);
-  const [annError, setAnnError] = useState(false);
   const [detailUpcoming, setDetailUpcoming] = useState<UpcomingAnime | null>(null);
 
   const toggleStar = (id: number) => {
@@ -852,17 +852,13 @@ function NewsView({ favAnime }: { favAnime: any[] }) {
     });
   };
 
-  const loadAnn = () => {
-    setAnnLoading(true); setAnnError(false);
-    const cached = LS.get<{ ts: number; data: NewsItem[] } | null>("anical_ann_news", null);
-    if (cached && Date.now() - cached.ts < NEWS_TTL) { setAnnNews(cached.data); setAnnLoading(false); return; }
-    fetchAnnNews()
-      .then((items) => { setAnnNews(items); LS.set("anical_ann_news", { ts: Date.now(), data: items }); })
-      .catch(() => setAnnError(true))
-      .finally(() => setAnnLoading(false));
+  const reload = () => {
+    setUpcomingLoading(true);
+    localStorage.removeItem("anical_upcoming_cache");
+    fetchUpcoming()
+      .then((items) => { setUpcoming(items); LS.set("anical_upcoming_cache", { ts: Date.now(), data: items }); })
+      .finally(() => setUpcomingLoading(false));
   };
-
-  useEffect(() => { loadAnn(); }, []);
 
   useEffect(() => {
     const cached = LS.get<{ ts: number; data: UpcomingAnime[] } | null>("anical_upcoming_cache", null);
@@ -872,75 +868,29 @@ function NewsView({ favAnime }: { favAnime: any[] }) {
       .finally(() => setUpcomingLoading(false));
   }, []);
 
-  useEffect(() => {
-    if (favAnime.length === 0) { setFavLoading(false); return; }
-    const top = favAnime.slice(0, 3);
-    const key = `anical_fav_news_${top.map((a: any) => a.id).join("_")}`;
-    const cached = LS.get<{ ts: number; data: NewsItem[] } | null>(key, null);
-    if (cached && Date.now() - cached.ts < NEWS_TTL) { setFavNews(cached.data); setFavLoading(false); return; }
-    Promise.all(top.map((a: any) => fetchAnimeNewsItems(a)))
-      .then((results) => { const all = results.flat(); setFavNews(all); LS.set(key, { ts: Date.now(), data: all }); })
-      .finally(() => setFavLoading(false));
-  }, [favAnime]);
-
-  const SectionHeader = ({ emoji, title, count, accent }: { emoji: string; title: string; count?: number; accent?: boolean }) => (
-    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12, fontSize:12, fontWeight:700, color: accent ? OR : MT, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
-      <span style={{ fontSize:14 }}>{emoji}</span><span>{title}</span>
-      {count !== undefined && <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background: accent ? OR2 : BG3, border:`1px solid ${accent ? OR3 : BD}`, color: accent ? OR : MT }}>{count}</span>}
-      <div style={{ flex:1, height:1, background:BD }}/>
-    </div>
-  );
-
   return (
     <div style={{ padding:"4px 16px 24px" }}>
       <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", padding:"12px 0 16px" }}>
         <div>
-          <div style={{ fontSize:22, fontWeight:900, letterSpacing:"-.5px" }}>Discover</div>
-          <div style={{ fontSize:12, color:MT, marginTop:2 }}>Upcoming seasons, news & your shows</div>
+          <div style={{ fontSize:22, fontWeight:900, letterSpacing:"-.5px" }}>Upcoming</div>
+          <div style={{ fontSize:12, color:MT, marginTop:2 }}>Announced & upcoming anime — star to track</div>
         </div>
-        <button onClick={loadAnn} style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:10, padding:"7px 12px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>↻</button>
+        <button onClick={reload} style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:10, padding:"7px 12px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>↻</button>
       </div>
 
-      {/* ── Upcoming Anime ── */}
-      <div style={{ marginBottom:28 }}>
-        <SectionHeader emoji="🔜" title="Upcoming Anime" count={upcomingStars.length > 0 ? upcomingStars.length : undefined} accent={upcomingStars.length > 0}/>
-        {upcomingStars.length > 0 && (
-          <div style={{ fontSize:11, color:MT, marginBottom:10, padding:"6px 10px", background:OR2, border:`1px solid ${OR3}`, borderRadius:8 }}>
-            ★ {upcomingStars.length} show{upcomingStars.length === 1 ? "" : "s"} on your radar
-          </div>
-        )}
-        {upcomingLoading ? [0,1,2,3].map((i) => <NewsSkeleton key={i}/>) :
-         upcoming.length === 0 ? <div style={{ textAlign:"center", padding:"20px 0", color:MT, fontSize:13 }}>No upcoming shows found.</div> :
-         upcoming.map((a, i) => (
-           <UpcomingCard key={a.id} anime={a} starred={upcomingStars.includes(a.id)} onToggle={toggleStar} onOpen={setDetailUpcoming} delay={i * 20}/>
-         ))}
-      </div>
-
-      {/* ── Your Shows News ── */}
-      {favAnime.length > 0 && (
-        <div style={{ marginBottom:28 }}>
-          <SectionHeader emoji="⭐" title="Your Shows" count={favNews.length} accent/>
-          {favLoading ? [0,1,2].map((i) => <NewsSkeleton key={i}/>) :
-           favNews.length === 0 ? <div style={{ textAlign:"center", padding:"20px 0", color:MT, fontSize:13 }}>No recent news for your shows.</div> :
-           favNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 25}/>)}
+      {upcomingStars.length > 0 && (
+        <div style={{ fontSize:11, color:OR, marginBottom:14, padding:"7px 12px", background:OR2, border:`1px solid ${OR3}`, borderRadius:10 }}>
+          ★ {upcomingStars.length} show{upcomingStars.length === 1 ? "" : "s"} on your radar
         </div>
       )}
 
-      {/* ── Industry News ── */}
-      <div>
-        <SectionHeader emoji="📡" title="Industry News" count={!annLoading ? annNews.length : undefined}/>
-        {annLoading ? [0,1,2,3].map((i) => <NewsSkeleton key={i}/>) :
-         annError ? (
-           <div style={{ textAlign:"center", padding:"32px 0", color:MT, display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
-             <div style={{ fontSize:32 }}>📡</div>
-             <div style={{ fontSize:13 }}>Couldn't reach the news feed.</div>
-             <button onClick={loadAnn} style={{ background:BG3, border:`1px solid ${OR}`, color:OR, borderRadius:8, padding:"7px 16px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Retry</button>
-           </div>
-         ) :
-         annNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 20}/>)}
-      </div>
+      {upcomingLoading ? [0,1,2,3,4].map((i) => <NewsSkeleton key={i}/>) :
+       upcoming.length === 0 ? <div style={{ textAlign:"center", padding:"40px 0", color:MT, fontSize:13 }}>No upcoming shows found.</div> :
+       upcoming.map((a, i) => (
+         <UpcomingCard key={a.id} anime={a} starred={upcomingStars.includes(a.id)} onToggle={toggleStar} onOpen={setDetailUpcoming} delay={i * 20}/>
+       ))}
 
-      {/* ── Upcoming detail sheet ── */}
+      {/* ── Detail sheet ── */}
       {detailUpcoming && (
         <>
           <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.82)", zIndex:200, animation:"fadeIn .2s ease-out", backdropFilter:"blur(6px)" } as React.CSSProperties} onClick={() => setDetailUpcoming(null)}/>
@@ -976,6 +926,82 @@ function NewsView({ favAnime }: { favAnime: any[] }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ── News view ──────────────────────────────────────────────────────────────────
+function NewsView({ favAnime }: { favAnime: any[] }) {
+  const [annNews, setAnnNews] = useState<NewsItem[]>([]);
+  const [favNews, setFavNews] = useState<NewsItem[]>([]);
+  const [annLoading, setAnnLoading] = useState(true);
+  const [favLoading, setFavLoading] = useState(true);
+  const [annError, setAnnError] = useState(false);
+
+  const loadAnn = () => {
+    setAnnLoading(true); setAnnError(false);
+    const cached = LS.get<{ ts: number; data: NewsItem[] } | null>("anical_ann_news", null);
+    if (cached && Date.now() - cached.ts < NEWS_TTL) { setAnnNews(cached.data); setAnnLoading(false); return; }
+    fetchAnnNews()
+      .then((items) => { setAnnNews(items); LS.set("anical_ann_news", { ts: Date.now(), data: items }); })
+      .catch(() => setAnnError(true))
+      .finally(() => setAnnLoading(false));
+  };
+
+  useEffect(() => { loadAnn(); }, []);
+
+  useEffect(() => {
+    if (favAnime.length === 0) { setFavLoading(false); return; }
+    const top = favAnime.slice(0, 3);
+    const key = `anical_fav_news_${top.map((a: any) => a.id).join("_")}`;
+    const cached = LS.get<{ ts: number; data: NewsItem[] } | null>(key, null);
+    if (cached && Date.now() - cached.ts < NEWS_TTL) { setFavNews(cached.data); setFavLoading(false); return; }
+    Promise.all(top.map((a: any) => fetchAnimeNewsItems(a)))
+      .then((results) => { const all = results.flat(); setFavNews(all); LS.set(key, { ts: Date.now(), data: all }); })
+      .finally(() => setFavLoading(false));
+  }, [favAnime]);
+
+  const SectionHeader = ({ emoji, title, count, accent }: { emoji: string; title: string; count?: number; accent?: boolean }) => (
+    <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12, fontSize:12, fontWeight:700, color: accent ? OR : MT, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
+      <span style={{ fontSize:14 }}>{emoji}</span><span>{title}</span>
+      {count !== undefined && <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background: accent ? OR2 : BG3, border:`1px solid ${accent ? OR3 : BD}`, color: accent ? OR : MT }}>{count}</span>}
+      <div style={{ flex:1, height:1, background:BD }}/>
+    </div>
+  );
+
+  return (
+    <div style={{ padding:"4px 16px 24px" }}>
+      <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", padding:"12px 0 16px" }}>
+        <div>
+          <div style={{ fontSize:22, fontWeight:900, letterSpacing:"-.5px" }}>News</div>
+          <div style={{ fontSize:12, color:MT, marginTop:2 }}>Industry news & updates for your shows</div>
+        </div>
+        <button onClick={loadAnn} style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:10, padding:"7px 12px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>↻</button>
+      </div>
+
+      {/* ── Your Shows News ── */}
+      {favAnime.length > 0 && (
+        <div style={{ marginBottom:28 }}>
+          <SectionHeader emoji="⭐" title="Your Shows" count={favNews.length} accent/>
+          {favLoading ? [0,1,2].map((i) => <NewsSkeleton key={i}/>) :
+           favNews.length === 0 ? <div style={{ textAlign:"center", padding:"20px 0", color:MT, fontSize:13 }}>No recent news for your shows.</div> :
+           favNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 25}/>)}
+        </div>
+      )}
+
+      {/* ── Industry News ── */}
+      <div>
+        <SectionHeader emoji="📡" title="Industry News" count={!annLoading ? annNews.length : undefined}/>
+        {annLoading ? [0,1,2,3].map((i) => <NewsSkeleton key={i}/>) :
+         annError ? (
+           <div style={{ textAlign:"center", padding:"32px 0", color:MT, display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
+             <div style={{ fontSize:32 }}>📡</div>
+             <div style={{ fontSize:13 }}>Couldn't reach the news feed.</div>
+             <button onClick={loadAnn} style={{ background:BG3, border:`1px solid ${OR}`, color:OR, borderRadius:8, padding:"7px 16px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Retry</button>
+           </div>
+         ) :
+         annNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 20}/>)}
+      </div>
     </div>
   );
 }
@@ -1176,10 +1202,11 @@ function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, 
 }
 
 // ── Bottom nav ─────────────────────────────────────────────────────────────────
-function BottomNav({ view, setView, favCount }: { view: string; setView: (v: "schedule"|"month"|"news"|"stats") => void; favCount: number }) {
-  const tabs: { id: "schedule"|"month"|"news"|"stats"; emoji: string; label: string }[] = [
+function BottomNav({ view, setView, favCount }: { view: string; setView: (v: "schedule"|"month"|"upcoming"|"news"|"stats") => void; favCount: number }) {
+  const tabs: { id: "schedule"|"month"|"upcoming"|"news"|"stats"; emoji: string; label: string }[] = [
     { id:"schedule", emoji:"📋", label:"Schedule" },
     { id:"month",    emoji:"📅", label:"Calendar" },
+    { id:"upcoming", emoji:"🔜", label:"Upcoming" },
     { id:"news",     emoji:"📰", label:"News"     },
     { id:"stats",    emoji:"⭐", label:"My List"  },
   ];
@@ -1227,7 +1254,7 @@ export default function AniCal() {
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadMsg, setLoadMsg] = useState("Starting up…");
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"schedule"|"month"|"news"|"stats">("schedule");
+  const [view, setView] = useState<"schedule"|"month"|"upcoming"|"news"|"stats">("schedule");
   const [selectedDay, setSelectedDay] = useState(todayDayIdx);
   const [monthOffset, setMonthOffset] = useState(0);
   const [favs, setFavs] = useState<number[]>([]);
@@ -1537,6 +1564,9 @@ export default function AniCal() {
                 onToggleFav={toggleFav}
                 todayDayIdx={todayDayIdx}
               />
+            )}
+            {view === "upcoming" && (
+              <UpcomingView/>
             )}
             {view === "news" && (
               <NewsView favAnime={favAnime}/>
