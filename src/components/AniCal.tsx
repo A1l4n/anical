@@ -31,16 +31,17 @@ const AVATAR_COLORS = ["#FF6B1A","#E91E8C","#9C27B0","#2196F3","#00BCD4","#4CAF5
 const OR  = "#FF6B1A";
 const OR2 = "rgba(255,107,26,0.13)";
 const OR3 = "rgba(255,107,26,0.38)";
-const BG  = "#09090f";
-const BG2 = "#111119";
-const BG3 = "#17171f";
-const BG4 = "#1d1d27";
-const BD  = "#252533";
-const BD2 = "#323244";
-const TX  = "#f2f2fa";
-const MT  = "#8585a8";
-const MT2 = "#484862";
-const GR  = "#22c55e";
+// These reference CSS custom properties so they respond to dark/light mode
+const BG  = "var(--c-bg)";
+const BG2 = "var(--c-bg2)";
+const BG3 = "var(--c-bg3)";
+const BG4 = "var(--c-bg4)";
+const BD  = "var(--c-bd)";
+const BD2 = "var(--c-bd2)";
+const TX  = "var(--c-tx)";
+const MT  = "var(--c-mt)";
+const MT2 = "var(--c-mt2)";
+const GR  = "var(--c-gr)";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 type Anime = {
@@ -362,6 +363,8 @@ async function reactToPost(post: CommunityPost, emoji: string): Promise<void> {
 
 // ── Global CSS ─────────────────────────────────────────────────────────────────
 const GLOBAL_CSS = `
+  :root{--c-bg:#09090f;--c-bg2:#111119;--c-bg3:#17171f;--c-bg4:#1d1d27;--c-bd:#252533;--c-bd2:#323244;--c-tx:#f2f2fa;--c-mt:#8585a8;--c-mt2:#484862;--c-gr:#22c55e;--c-nav:rgba(9,9,15,.92);--c-hdr:rgba(9,9,15,.82);--c-toast:rgba(17,17,25,.96)}
+  :root.light{--c-bg:#f5f5f8;--c-bg2:#ffffff;--c-bg3:#ebebf0;--c-bg4:#e0e0e8;--c-bd:#d5d5e0;--c-bd2:#c0c0ce;--c-tx:#1a1a2e;--c-mt:#55556a;--c-mt2:#9090a8;--c-gr:#16a34a;--c-nav:rgba(245,245,248,.92);--c-hdr:rgba(245,245,248,.82);--c-toast:rgba(235,235,240,.98)}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   ::-webkit-scrollbar{display:none}
   input::placeholder{color:${MT2}}
@@ -574,8 +577,77 @@ function AnimeCard({ anime, favorites, onOpen, onToggleFav, selectedDayIdx, toda
   );
 }
 
+// ── Trailer player ─────────────────────────────────────────────────────────────
+// Fetches the YouTube trailer ID from Jikan on-demand; autoplays muted.
+// Tap anywhere on the video (or the ⏹ button) to stop. Tap the thumbnail to replay.
+// noSpoiler=true → shows static cover image only (no fetch, no video).
+function TrailerPlayer({ animeId, imageUrl, noSpoiler }: { animeId: number; imageUrl?: string | null; noSpoiler: boolean }) {
+  const [ytId, setYtId] = useState<string | null | undefined>(undefined); // undefined=loading, null=none
+  const [playing, setPlaying] = useState(false);
+
+  useEffect(() => {
+    if (noSpoiler) return;
+    let cancelled = false;
+    fetch(`https://api.jikan.moe/v4/anime/${animeId}`, { signal: AbortSignal.timeout(8000) })
+      .then((r) => r.json())
+      .then((j) => {
+        if (cancelled) return;
+        const id: string | null = j.data?.trailer?.youtube_id || null;
+        setYtId(id);
+        if (id) setPlaying(true);
+      })
+      .catch(() => { if (!cancelled) setYtId(null); });
+    return () => { cancelled = true; };
+  }, [animeId, noSpoiler]);
+
+  const imgStyle: React.CSSProperties = { width:"100%", height:220, objectFit:"cover", objectPosition:"top", borderRadius:14, marginBottom:16, background:BG4, display:"block" };
+
+  // No-spoiler → static cover only
+  if (noSpoiler) return imageUrl ? <img src={imageUrl} alt="" style={imgStyle}/> : null;
+
+  // Loading or no trailer → static cover
+  if (!ytId) return imageUrl ? <img src={imageUrl} alt="" style={imgStyle}/> : null;
+
+  // Trailer stopped → YouTube thumbnail + play button
+  if (!playing) {
+    return (
+      <div style={{ position:"relative", width:"100%", height:220, borderRadius:14, overflow:"hidden", marginBottom:16, background:"#000", cursor:"pointer" }} onClick={() => setPlaying(true)}>
+        <img src={`https://img.youtube.com/vi/${ytId}/hqdefault.jpg`} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block", opacity:.75 }}/>
+        <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,.35)" }}>
+          <div style={{ width:58, height:58, borderRadius:"50%", background:"rgba(255,255,255,.92)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <span style={{ fontSize:22, marginLeft:5, lineHeight:1 }}>▶</span>
+          </div>
+        </div>
+        <div style={{ position:"absolute", top:10, left:12, background:"rgba(220,0,0,.85)", borderRadius:5, padding:"3px 8px", fontSize:9, fontWeight:800, color:"#fff", letterSpacing:".6px" }}>TRAILER</div>
+      </div>
+    );
+  }
+
+  // Playing → iframe + invisible tap overlay
+  return (
+    <div style={{ position:"relative", width:"100%", borderRadius:14, overflow:"hidden", marginBottom:16, background:"#000" }}>
+      <iframe
+        src={`https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1`}
+        style={{ width:"100%", height:220, border:"none", display:"block" }}
+        allow="autoplay; encrypted-media; picture-in-picture"
+        allowFullScreen
+        title="Anime Trailer"
+      />
+      {/* Full-area tap overlay — captures any tap on the video and stops it */}
+      <div
+        onClick={() => setPlaying(false)}
+        style={{ position:"absolute", inset:0, cursor:"pointer", display:"flex", alignItems:"flex-start", justifyContent:"flex-end", padding:10 }}
+      >
+        <button style={{ background:"rgba(0,0,0,.65)", border:"none", color:"#fff", borderRadius:6, padding:"5px 10px", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit", backdropFilter:"blur(4px)", display:"flex", alignItems:"center", gap:4 } as React.CSSProperties}>
+          <span>⏹</span><span>Stop</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Detail sheet ───────────────────────────────────────────────────────────────
-function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, tz }: { anime: Anime | null; favorites: number[]; onClose: () => void; onToggleFav: (id: number) => void; onOpenCommunity: (a: Anime) => void; tz: string }) {
+function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, noSpoiler, tz }: { anime: Anime | null; favorites: number[]; onClose: () => void; onToggleFav: (id: number) => void; onOpenCommunity: (a: Anime) => void; noSpoiler: boolean; tz: string }) {
   if (!anime) return null;
   const isFav = favorites.includes(anime.id);
   const localTime = jstToLocal(anime.broadcast_time, tz);
@@ -585,7 +657,7 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, 
       <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"88vh", overflowY:"auto", zIndex:201, animation:"sheetUp .3s cubic-bezier(.2,.7,.2,1)" }}>
         <div style={{ width:40, height:4, background:BD2, borderRadius:2, margin:"14px auto 0" }}/>
         <div style={{ padding:"16px 20px 48px" }}>
-          {anime.image_url && <img src={anime.image_url} alt="" style={{ width:"100%", height:220, objectFit:"cover", objectPosition:"top", borderRadius:14, marginBottom:16, background:BG4, display:"block" }}/>}
+          <TrailerPlayer animeId={anime.id} imageUrl={anime.image_url} noSpoiler={noSpoiler}/>
           <div style={{ fontSize:21, fontWeight:800, lineHeight:1.2, marginBottom:8 }}>{anime.title}</div>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
             {anime.score && <span style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:6, background:OR2, color:OR, border:`1px solid ${OR3}` }}>★ {anime.score}</span>}
@@ -1847,7 +1919,7 @@ function BottomNav({ view, setView, favCount }: { view: string; setView: (v: "sc
     { id:"stats",     emoji:"⭐", label:"My List"   },
   ];
   return (
-    <nav className="anical-bottom-nav" style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, zIndex:100, background:`rgba(9,9,15,0.92)`, backdropFilter:"blur(24px) saturate(1.4)", borderTop:`1px solid rgba(37,37,51,0.8)`, display:"flex" } as React.CSSProperties}>
+    <nav className="anical-bottom-nav" style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, zIndex:100, background:"var(--c-nav)", backdropFilter:"blur(24px) saturate(1.4)", borderTop:`1px solid ${BD}`, display:"flex" } as React.CSSProperties}>
       {tabs.map((tab) => {
         const active = view === tab.id;
         return (
@@ -1899,6 +1971,12 @@ export default function AniCal() {
   const [detailAnime, setDetailAnime] = useState<Anime | null>(null);
   const [communityAnime, setCommunityAnime] = useState<Anime | null>(null);
   const [toast, setToast] = useState({ show: false, msg: "" });
+  const [dark, setDark] = useState<boolean>(() => {
+    const d = LS.get<boolean>("anical_dark", true);
+    document.documentElement.classList.toggle("light", !d);
+    return d;
+  });
+  const [noSpoiler, setNoSpoiler] = useState<boolean>(() => LS.get<boolean>("anical_no_spoiler", false));
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const tz = "auto";
@@ -1932,6 +2010,11 @@ export default function AniCal() {
   useEffect(() => { LS.set("anical_favs", favs); }, [favs]);
   useEffect(() => { setNotifSettings(LS.get<NotifSettings>("anical_notif", DEFAULT_NOTIF)); }, []);
   useEffect(() => { LS.set("anical_notif", notifSettings); }, [notifSettings]);
+  useEffect(() => {
+    document.documentElement.classList.toggle("light", !dark);
+    LS.set("anical_dark", dark);
+  }, [dark]);
+  useEffect(() => { LS.set("anical_no_spoiler", noSpoiler); }, [noSpoiler]);
 
   // ── Init ──
   useEffect(() => { notif.getPermission().then((p) => setNotifPerm(p as any)); }, []);
@@ -2128,7 +2211,7 @@ export default function AniCal() {
           onTouchEnd={onTouchEnd}
         >
           {/* ── Premium Header ── */}
-          <div style={{ position:"sticky", top:0, zIndex:50, background:"rgba(9,9,15,0.82)", backdropFilter:"blur(32px) saturate(1.6)", borderBottom:"1px solid rgba(255,255,255,0.055)" } as React.CSSProperties}>
+          <div style={{ position:"sticky", top:0, zIndex:50, background:"var(--c-hdr)", backdropFilter:"blur(32px) saturate(1.6)", borderBottom:`1px solid ${BD}` } as React.CSSProperties}>
             {/* Brand row */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 16px 10px" }}>
               <div style={{ display:"flex", alignItems:"center", gap:9 }}>
@@ -2146,7 +2229,7 @@ export default function AniCal() {
                 {(view === "schedule" || view === "month") && (
                   <button
                     onClick={() => setFavFilter((v) => !v)}
-                    style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 12px", borderRadius:20, border:`1px solid ${favFilter ? OR : "rgba(255,255,255,0.1)"}`, background: favFilter ? `linear-gradient(135deg, ${OR2}, rgba(255,107,26,0.12))` : "rgba(255,255,255,0.05)", color: favFilter ? OR : MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", transition:"all .18s", boxShadow: favFilter ? `0 0 12px rgba(255,107,26,.25)` : "none", letterSpacing:".3px" } as React.CSSProperties}
+                    style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 12px", borderRadius:20, border:`1px solid ${favFilter ? OR : BD}`, background: favFilter ? `linear-gradient(135deg, ${OR2}, rgba(255,107,26,0.12))` : BG3, color: favFilter ? OR : MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", transition:"all .18s", boxShadow: favFilter ? `0 0 12px rgba(255,107,26,.25)` : "none", letterSpacing:".3px" } as React.CSSProperties}
                   >
                     <span style={{ fontSize:13 }}>{favFilter ? "★" : "☆"}</span>
                     <span>Favs</span>
@@ -2156,9 +2239,21 @@ export default function AniCal() {
                 {(view === "schedule" || view === "month") && (
                   <button
                     onClick={() => loadSchedule(true)}
-                    style={{ width:34, height:34, borderRadius:"50%", border:"1px solid rgba(255,255,255,0.1)", background:"rgba(255,255,255,0.05)", color:MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s" } as React.CSSProperties}
+                    style={{ width:34, height:34, borderRadius:"50%", border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s" } as React.CSSProperties}
                   >↻</button>
                 )}
+                {/* No-spoiler toggle — always visible */}
+                <button
+                  onClick={() => { setNoSpoiler((v) => !v); Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); }}
+                  title={noSpoiler ? "No-spoiler on — trailers hidden" : "No-spoiler off — trailers shown"}
+                  style={{ width:34, height:34, borderRadius:"50%", border:`1px solid ${noSpoiler ? "rgba(139,92,246,.5)" : BD}`, background: noSpoiler ? "rgba(139,92,246,.14)" : BG3, color: noSpoiler ? "rgba(167,139,250,1)" : MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s", flexShrink:0 } as React.CSSProperties}
+                >{noSpoiler ? "🙈" : "👁"}</button>
+                {/* Dark / light toggle — always visible */}
+                <button
+                  onClick={() => { setDark((v) => !v); Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); }}
+                  title={dark ? "Switch to light mode" : "Switch to dark mode"}
+                  style={{ width:34, height:34, borderRadius:"50%", border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s", flexShrink:0 } as React.CSSProperties}
+                >{dark ? "☀️" : "🌙"}</button>
               </div>
             </div>
 
@@ -2263,7 +2358,7 @@ export default function AniCal() {
 
           {/* Detail sheet */}
           {detailAnime && (
-            <DetailSheet anime={detailAnime} favorites={favs} tz={tz}
+            <DetailSheet anime={detailAnime} favorites={favs} tz={tz} noSpoiler={noSpoiler}
               onClose={() => setDetailAnime(null)}
               onToggleFav={(id: number) => { toggleFav(id); setDetailAnime((a) => (a ? { ...a } : null)); }}
               onOpenCommunity={(a) => { setDetailAnime(null); setCommunityAnime(a); }}/>
@@ -2275,7 +2370,7 @@ export default function AniCal() {
           )}
 
           {/* Toast */}
-          <div style={{ position:"fixed", bottom:100, left:"50%", transform:`translateX(-50%) translateY(${toast.show ? 0 : 12}px)`, background:`rgba(17,17,25,0.96)`, border:`1px solid ${BD2}`, backdropFilter:"blur(16px)", borderRadius:10, padding:"9px 20px", fontSize:13, fontWeight:600, color:TX, opacity: toast.show ? 1 : 0, transition:"all .3s cubic-bezier(.2,.7,.2,1)", pointerEvents:"none", zIndex:300, whiteSpace:"nowrap" } as React.CSSProperties}>
+          <div style={{ position:"fixed", bottom:100, left:"50%", transform:`translateX(-50%) translateY(${toast.show ? 0 : 12}px)`, background:"var(--c-toast)", border:`1px solid ${BD2}`, backdropFilter:"blur(16px)", borderRadius:10, padding:"9px 20px", fontSize:13, fontWeight:600, color:TX, opacity: toast.show ? 1 : 0, transition:"all .3s cubic-bezier(.2,.7,.2,1)", pointerEvents:"none", zIndex:300, whiteSpace:"nowrap" } as React.CSSProperties}>
             {toast.msg}
           </div>
         </div>
