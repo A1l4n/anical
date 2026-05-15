@@ -604,6 +604,13 @@ function TrailerPlayer({ animeId, imageUrl, noSpoiler }: { animeId: number; imag
       .then((r) => r.json())
       .then((j) => {
         if (cancelled) return;
+        // Only show trailer if the anime is currently airing or released recently
+        // (prevents showing an old Season-1 PV for a currently-airing sequel season)
+        const currentYear = new Date().getFullYear();
+        const isRelevant =
+          j.data?.airing === true ||
+          (j.data?.year != null && j.data.year >= currentYear - 1);
+        if (!isRelevant) { setYtId(null); return; }
         // youtube_id is often null even when embed_url has the real ID — parse both
         const id: string | null =
           j.data?.trailer?.youtube_id ||
@@ -1499,7 +1506,7 @@ function NewsSkeleton() {
 }
 
 // ── Community view ─────────────────────────────────────────────────────────────
-function CommunityView({ favAnime, onOpenCommunity }: { favAnime: Anime[]; onOpenCommunity: (a: Anime) => void }) {
+function CommunityView({ favAnime, allAnime, onOpenCommunity }: { favAnime: Anime[]; allAnime: Anime[]; onOpenCommunity: (a: Anime) => void }) {
   const [threads, setThreads] = useState<CommunityThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -1605,17 +1612,27 @@ function CommunityView({ favAnime, onOpenCommunity }: { favAnime: Anime[]; onOpe
       ) : (
         filtered.map((t, i) => {
           const favMatch = favAnime.find((a) => a.id === t.anime_id);
+          // Look up full anime data (schedule > favs) to get genres, image, etc.
+          const animeData = allAnime.find((a) => a.id === t.anime_id) ?? favMatch;
+          const genres = animeData?.genres?.slice(0, 2) ?? [];
           return (
             <div key={t.anime_id}
-              onClick={() => onOpenCommunity({ id:t.anime_id, title:t.anime_title, image_url: favMatch?.image_url ?? null })}
+              onClick={() => onOpenCommunity({ id:t.anime_id, title:t.anime_title, image_url: animeData?.image_url ?? null, genres: animeData?.genres })}
               style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 14px", background:BG2, border:`1px solid ${BD}`, borderRadius:14, marginBottom:8, cursor:"pointer", animation:`cardIn .35s ${Math.min(i*30,300)}ms both`, transition:"transform .15s" }}
               className="anical-card">
-              {favMatch?.image_url
-                ? <img src={favMatch.image_url} alt="" style={{ width:44, height:44, borderRadius:"50%", objectFit:"cover", flexShrink:0, border:`1px solid ${BD2}` }}/>
+              {animeData?.image_url
+                ? <img src={animeData.image_url} alt="" style={{ width:44, height:44, borderRadius:"50%", objectFit:"cover", flexShrink:0, border:`1px solid ${BD2}` }}/>
                 : <div style={{ width:44, height:44, borderRadius:"50%", background:`linear-gradient(135deg, #7c3aed, #4f46e5)`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>💬</div>}
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontSize:13, fontWeight:700, color:TX, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{t.anime_title}</div>
                 <div style={{ fontSize:10, color:MT2, marginTop:2 }}>{formatNewsAge(t.last_post)} · {t.post_count} post{t.post_count === 1 ? "" : "s"}</div>
+                {genres.length > 0 && (
+                  <div style={{ display:"flex", gap:4, marginTop:4, flexWrap:"wrap" }}>
+                    {genres.map((g) => (
+                      <span key={g} style={{ fontSize:9, fontWeight:700, padding:"2px 6px", borderRadius:4, background:BG3, border:`1px solid ${BD}`, color:MT, letterSpacing:".2px" }}>{g}</span>
+                    ))}
+                  </div>
+                )}
               </div>
               <div style={{ flexShrink:0, background:"rgba(139,92,246,.15)", border:"1px solid rgba(139,92,246,.3)", borderRadius:8, padding:"4px 9px", fontSize:11, fontWeight:800, color:"rgba(167,139,250,1)" }}>
                 {t.post_count}
@@ -2187,6 +2204,12 @@ export default function AniCal() {
       .filter((a, i, arr) => arr.findIndex((x) => x.id === a.id) === i),
     [schedule, favs]);
 
+  // Full flat list of every anime in the schedule — used by CommunityView for genre tag lookups
+  const allAnime = useMemo(() =>
+    DAYS.flatMap((d) => schedule[d] || [])
+      .filter((a, i, arr) => arr.findIndex((x) => x.id === a.id) === i),
+    [schedule]);
+
   useEffect(() => {
     if (boot !== "ready") return;
     if (notifPerm !== "granted" || !notifSettings.enabled) { notif.cancelAll(); return; }
@@ -2387,7 +2410,7 @@ export default function AniCal() {
               />
             )}
             {view === "community" && (
-              <CommunityView favAnime={favAnime} onOpenCommunity={(a) => setCommunityAnime(a)}/>
+              <CommunityView favAnime={favAnime} allAnime={allAnime} onOpenCommunity={(a) => setCommunityAnime(a)}/>
             )}
             {view === "news" && (
               <NewsView favAnime={favAnime}/>
