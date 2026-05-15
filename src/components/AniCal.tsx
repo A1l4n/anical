@@ -646,6 +646,7 @@ const GLOBAL_CSS = `
   @keyframes sheetUpScale{0%{transform:translate(-50%,42px) scale(.97);opacity:0}65%{opacity:1}100%{transform:translate(-50%,0) scale(1);opacity:1}}
   @keyframes detailEl{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
   @keyframes heroIn{0%{opacity:0;transform:scale(1.08)}100%{opacity:1;transform:scale(1)}}
+  @keyframes zoomIn{0%{opacity:0;transform:scale(.88)}60%{opacity:1}100%{opacity:1;transform:scale(1)}}
   @keyframes viewIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
   @keyframes viewInFade{from{opacity:0}to{opacity:1}}
   @keyframes cardIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
@@ -2322,6 +2323,7 @@ function ArtPostSheet({ post, onClose, onUpdated, onOpenAnime, allAnime, onToast
   const [liked, setLiked] = useState<boolean>(() => LS.get<boolean>(`anical_art_liked_${post.id}`, false));
   const [flagged, setFlagged] = useState<boolean>(() => LS.get<boolean>(`anical_art_flagged_${post.id}`, false));
   const [optimisticLikes, setOptimisticLikes] = useState(post.likes);
+  const [zoomed, setZoomed] = useState(false);
   const [nickname, setNickname] = useState<string>(() => LS.get<string>("anical_nickname", ""));
   const [nickDraft, setNickDraft] = useState("");
   const [pickingNick, setPickingNick] = useState(!LS.get<string>("anical_nickname", ""));
@@ -2419,11 +2421,20 @@ function ArtPostSheet({ post, onClose, onUpdated, onOpenAnime, allAnime, onToast
           </button>
         </div>
 
-        {/* Image */}
-        <div style={{ width:"100%", background:"#000", position:"relative", animation:"heroIn .45s cubic-bezier(.2,.7,.2,1) both" } as React.CSSProperties}>
+        {/* Image — tap to view full-screen */}
+        <button
+          aria-label="View full-size image"
+          onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setZoomed(true); }}
+          style={{ width:"100%", background:"#000", position:"relative", animation:"heroIn .45s cubic-bezier(.2,.7,.2,1) both", border:"none", padding:0, cursor:"zoom-in", display:"block", fontFamily:"inherit" } as React.CSSProperties}
+        >
           <img src={post.image_url} alt={post.caption || "Anime fan art"} loading="eager" decoding="async"
             style={{ width:"100%", maxHeight:"60vh", objectFit:"contain", display:"block" } as React.CSSProperties}/>
-        </div>
+          {/* Subtle zoom hint that fades in after image loads */}
+          <div style={{ position:"absolute", bottom:10, right:10, display:"inline-flex", alignItems:"center", gap:5, padding:"5px 9px", borderRadius:99, background:"rgba(0,0,0,.55)", border:"1px solid rgba(255,255,255,.18)", color:"#fff", fontSize:10.5, fontWeight:700, backdropFilter:"blur(8px)", pointerEvents:"none" } as React.CSSProperties}>
+            <Icon name="search" size={10} color="#fff" strokeWidth={2.4}/>
+            <span>Tap to zoom</span>
+          </div>
+        </button>
 
         {/* Actions row */}
         <div style={{ padding:"12px 18px 6px", display:"flex", alignItems:"center", gap:14 }}>
@@ -2535,7 +2546,128 @@ function ArtPostSheet({ post, onClose, onUpdated, onOpenAnime, allAnime, onToast
           )}
         </div>
       </div>
+
+      {/* Full-screen image viewer — opens when the image is tapped */}
+      {zoomed && (
+        <ImageZoom
+          src={post.image_url}
+          alt={post.caption || "Anime fan art"}
+          onClose={() => setZoomed(false)}
+        />
+      )}
     </>
+  );
+}
+
+// ── Full-screen image viewer ───────────────────────────────────────────────────
+// Tap-to-close, edge-to-edge image at native aspect, double-tap to toggle 2x zoom.
+// Renders above all sheets so it sits on top of the ArtPostSheet.
+function ImageZoom({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const [zoomedIn, setZoomedIn] = useState(false);
+  const lastTap = useRef(0);
+
+  // Lock body scroll while the viewer is open
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  const handleTap = () => {
+    const now = Date.now();
+    if (now - lastTap.current < 280) {
+      // Double-tap → toggle 2× zoom
+      Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+      setZoomedIn((v) => !v);
+      lastTap.current = 0;
+    } else {
+      lastTap.current = now;
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Image viewer"
+      onClick={onClose}
+      style={{
+        position:"fixed", inset:0, zIndex:500,
+        background:"#000",
+        animation:"fadeIn .2s ease-out",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        overflow:"hidden",
+        paddingTop:"env(safe-area-inset-top, 0px)",
+        paddingBottom:"env(safe-area-inset-bottom, 0px)",
+      } as React.CSSProperties}
+    >
+      {/* Close button — pinned to safe-area-aware top-right */}
+      <button
+        aria-label="Close image viewer"
+        onClick={(e) => { e.stopPropagation(); onClose(); }}
+        style={{
+          position:"absolute",
+          top:"calc(env(safe-area-inset-top, 0px) + 12px)",
+          right:14,
+          width:40, height:40, borderRadius:"50%",
+          background:"rgba(0,0,0,.65)",
+          border:"1px solid rgba(255,255,255,.18)",
+          color:"#fff",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          cursor:"pointer", fontFamily:"inherit",
+          backdropFilter:"blur(8px)",
+          zIndex:2,
+        } as React.CSSProperties}
+      >
+        <Icon name="close" size={18} color="#fff"/>
+      </button>
+
+      {/* Image — animated entrance, double-tap zoom, scrolls if larger than viewport when zoomed */}
+      <div
+        onClick={(e) => { e.stopPropagation(); handleTap(); }}
+        style={{
+          width:"100%", height:"100%",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          overflow: zoomedIn ? "auto" : "hidden",
+          cursor: zoomedIn ? "zoom-out" : "zoom-in",
+        } as React.CSSProperties}
+      >
+        <img
+          src={src}
+          alt={alt}
+          style={{
+            maxWidth: zoomedIn ? "none" : "100%",
+            maxHeight: zoomedIn ? "none" : "100%",
+            width: zoomedIn ? "200%" : "auto",
+            height: zoomedIn ? "auto" : "auto",
+            objectFit:"contain",
+            display:"block",
+            transition:"all .25s cubic-bezier(.2,.7,.2,1)",
+            animation:"zoomIn .3s cubic-bezier(.2,.7,.2,1) both",
+            userSelect:"none",
+            WebkitUserSelect:"none" as const,
+          } as React.CSSProperties}
+          draggable={false}
+        />
+      </div>
+
+      {/* Bottom hint */}
+      <div style={{
+        position:"absolute",
+        bottom:"calc(env(safe-area-inset-bottom, 0px) + 18px)",
+        left:"50%", transform:"translateX(-50%)",
+        padding:"6px 12px", borderRadius:99,
+        background:"rgba(0,0,0,.6)",
+        border:"1px solid rgba(255,255,255,.12)",
+        color:"rgba(255,255,255,.85)",
+        fontSize:11, fontWeight:600,
+        backdropFilter:"blur(8px)",
+        pointerEvents:"none",
+        letterSpacing:".2px",
+      } as React.CSSProperties}>
+        {zoomedIn ? "Double-tap to fit · tap outside to close" : "Double-tap to zoom · tap outside to close"}
+      </div>
+    </div>
   );
 }
 
