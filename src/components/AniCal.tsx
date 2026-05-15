@@ -604,7 +604,11 @@ function TrailerPlayer({ animeId, imageUrl, noSpoiler }: { animeId: number; imag
       .then((r) => r.json())
       .then((j) => {
         if (cancelled) return;
-        const id: string | null = j.data?.trailer?.youtube_id || null;
+        // youtube_id is often null even when embed_url has the real ID — parse both
+        const id: string | null =
+          j.data?.trailer?.youtube_id ||
+          j.data?.trailer?.embed_url?.match(/embed\/([^?&]+)/)?.[1] ||
+          null;
         setYtId(id);
         if (id) setPlaying(true);
       })
@@ -2002,6 +2006,7 @@ export default function AniCal() {
   const isLoadingRef = useRef(false);
   const pullStartY = useRef<number | null>(null);
   const pullCurrentY = useRef(0);
+  const didHealRef = useRef(false);
 
   // ── Splash ──
   useEffect(() => {
@@ -2126,6 +2131,14 @@ export default function AniCal() {
   }, [healEmptyDays]);
 
   useEffect(() => { if (boot === "loading") loadSchedule(); }, [boot, loadSchedule]);
+
+  // Heal empty days once on first "ready" — handles the case where the splash screen
+  // loaded data directly from cache (bypassing loadSchedule's own heal timer).
+  useEffect(() => {
+    if (boot !== "ready" || didHealRef.current) return;
+    didHealRef.current = true;
+    setTimeout(() => healEmptyDays(schedule), 2200);
+  }, [boot, schedule, healEmptyDays]);
 
   useEffect(() => {
     if (!dayNavRef.current || view !== "schedule") return;
