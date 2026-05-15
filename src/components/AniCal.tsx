@@ -22,6 +22,66 @@ function openCrunchyroll(title: string) {
   }
 }
 
+// Streaming platform launchers — try the native app first on Android, browser fallback otherwise
+type StreamingPlatform = { id: string; label: string; emoji: string; color: string };
+const PLATFORMS: StreamingPlatform[] = [
+  { id: "crunchyroll", label: "Crunchyroll",  emoji: "🍥", color: "#F47521" },
+  { id: "netflix",     label: "Netflix",      emoji: "🎬", color: "#E50914" },
+  { id: "hidive",      label: "HIDIVE",       emoji: "💎", color: "#00B4E4" },
+  { id: "hulu",        label: "Hulu",         emoji: "🟢", color: "#1CE783" },
+  { id: "youtube",     label: "Search YT",    emoji: "▶️", color: "#FF0000" },
+];
+
+function openStreaming(platformId: string, title: string) {
+  const q = encodeURIComponent(title);
+  let web = "";
+  let intent: string | null = null;
+  switch (platformId) {
+    case "crunchyroll":
+      web = `https://www.crunchyroll.com/search?q=${q}`;
+      intent = `intent://search?q=${q}#Intent;scheme=crunchyroll;package=com.crunchyroll.crunchyroid;S.browser_fallback_url=${encodeURIComponent(web)};end`;
+      break;
+    case "netflix":
+      web = `https://www.netflix.com/search?q=${q}`;
+      intent = `intent://www.netflix.com/search?q=${q}#Intent;scheme=https;package=com.netflix.mediaclient;S.browser_fallback_url=${encodeURIComponent(web)};end`;
+      break;
+    case "hidive":
+      web = `https://www.hidive.com/search?q=${q}`;
+      intent = `intent://www.hidive.com/search?q=${q}#Intent;scheme=https;package=com.hidive.tv;S.browser_fallback_url=${encodeURIComponent(web)};end`;
+      break;
+    case "hulu":
+      web = `https://www.hulu.com/search?q=${q}`;
+      intent = `intent://www.hulu.com/search?q=${q}#Intent;scheme=https;package=com.hulu.plus;S.browser_fallback_url=${encodeURIComponent(web)};end`;
+      break;
+    case "youtube":
+      web = `https://www.youtube.com/results?search_query=${q}+anime+trailer`;
+      intent = `intent://www.youtube.com/results?search_query=${q}+anime+trailer#Intent;scheme=https;package=com.google.android.youtube;S.browser_fallback_url=${encodeURIComponent(web)};end`;
+      break;
+    default:
+      web = `https://www.google.com/search?q=${q}+watch+anime`;
+  }
+  if (IS_NATIVE && intent) window.open(intent, "_system");
+  else window.open(web, IS_NATIVE ? "_system" : "_blank");
+}
+
+async function shareAnime(anime: { title: string; mal_url?: string | null; image_url?: string | null }) {
+  const url = anime.mal_url || `https://myanimelist.net/search/all?q=${encodeURIComponent(anime.title)}`;
+  const text = `Check out "${anime.title}" — watching it on AniCal`;
+  try {
+    if (typeof navigator !== "undefined" && (navigator as any).share) {
+      await (navigator as any).share({ title: anime.title, text, url });
+      return true;
+    }
+  } catch { /* user cancelled */ }
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      await navigator.clipboard.writeText(`${text}\n${url}`);
+      return "copied";
+    }
+  } catch {}
+  return false;
+}
+
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] as const;
@@ -134,6 +194,22 @@ function seasonYear(season: Season, year: number): string {
   return `${season.charAt(0).toUpperCase() + season.slice(1)} ${year}`;
 }
 
+// Rough countdown to a season — uses the 1st of the start month
+function seasonCountdown(season: Season, year: number): string | null {
+  const startMonth = SEASON_MONTHS[season];
+  const start = new Date(year, startMonth, 1);
+  const now = new Date();
+  const days = Math.floor((start.getTime() - now.getTime()) / 86_400_000);
+  if (days < -90) return null;
+  if (days < -7)  return "currently airing";
+  if (days < 0)   return "just started";
+  if (days === 0) return "starts today";
+  if (days === 1) return "starts tomorrow";
+  if (days < 14)  return `in ${days} days`;
+  if (days < 60)  return `in ${Math.round(days / 7)} weeks`;
+  return `in ~${Math.round(days / 30)} months`;
+}
+
 
 // ── Utilities ──────────────────────────────────────────────────────────────────
 function getDeviceTz(): string {
@@ -216,12 +292,13 @@ async function fetchAnnNews(): Promise<NewsItem[]> {
   const doc = new DOMParser().parseFromString(text, "text/xml");
   return Array.from(doc.querySelectorAll("item")).slice(0, 30).map((el) => {
     const raw = el.querySelector("description")?.textContent || "";
+    const link = el.querySelector("link")?.textContent?.trim() || "";
     return {
-      id: el.querySelector("guid")?.textContent || Math.random().toString(),
+      id: el.querySelector("guid")?.textContent || link || `ann-${el.querySelector("title")?.textContent?.slice(0,30)}`,
       title: el.querySelector("title")?.textContent?.trim() || "",
       date: el.querySelector("pubDate")?.textContent || undefined,
       excerpt: raw.replace(/<[^>]+>/g, "").trim().slice(0, 500) || undefined,
-      url: el.querySelector("link")?.textContent?.trim() || "",
+      url: link,
       source: "ANN" as const,
     };
   }).filter((n) => n.title && n.url);
@@ -340,6 +417,13 @@ function getAvatarColor(nickname: string): string {
   return AVATAR_COLORS[hash % AVATAR_COLORS.length];
 }
 
+// Only allow colors from our predefined palette to prevent CSS injection from
+// hand-edited records in the community DB
+function safeAvatarColor(c: string | null | undefined, fallback: string = OR): string {
+  if (!c) return fallback;
+  return AVATAR_COLORS.includes(c) ? c : fallback;
+}
+
 function Avatar({ nickname, color, size = 36 }: { nickname: string; color: string; size?: number }) {
   return (
     <div style={{ width:size, height:size, borderRadius:"50%", background:`linear-gradient(135deg, ${color}, ${color}99)`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size * 0.42, fontWeight:800, color:"#fff", flexShrink:0, boxShadow:`0 3px 10px ${color}44`, userSelect:"none" } as React.CSSProperties}>
@@ -388,8 +472,10 @@ async function reactToPost(post: CommunityPost, emoji: string): Promise<void> {
 // ── Global CSS ─────────────────────────────────────────────────────────────────
 const GLOBAL_CSS = `
   :root{--c-bg:#09090f;--c-bg2:#111119;--c-bg3:#17171f;--c-bg4:#1d1d27;--c-bd:#252533;--c-bd2:#323244;--c-tx:#f2f2fa;--c-mt:#8585a8;--c-mt2:#484862;--c-gr:#22c55e;--c-nav:rgba(9,9,15,.92);--c-hdr:rgba(9,9,15,.82);--c-toast:rgba(17,17,25,.96)}
-  :root.light{--c-bg:#f5f5f8;--c-bg2:#ffffff;--c-bg3:#ebebf0;--c-bg4:#e0e0e8;--c-bd:#d5d5e0;--c-bd2:#c0c0ce;--c-tx:#1a1a2e;--c-mt:#55556a;--c-mt2:#9090a8;--c-gr:#16a34a;--c-nav:rgba(245,245,248,.92);--c-hdr:rgba(245,245,248,.82);--c-toast:rgba(235,235,240,.98)}
+  :root.light{--c-bg:#f5f5f8;--c-bg2:#ffffff;--c-bg3:#ebebf0;--c-bg4:#e0e0e8;--c-bd:#d5d5e0;--c-bd2:#c0c0ce;--c-tx:#1a1a2e;--c-mt:#4a4a5e;--c-mt2:#6a6a82;--c-gr:#16a34a;--c-nav:rgba(245,245,248,.92);--c-hdr:rgba(245,245,248,.82);--c-toast:rgba(235,235,240,.98)}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  *:focus{outline:none}
+  *:focus-visible{outline:2px solid ${OR};outline-offset:2px;border-radius:8px}
   ::-webkit-scrollbar{display:none}
   input::placeholder{color:${MT2}}
   body{margin:0;background:${BG}}
@@ -517,18 +603,16 @@ function LoadingView({ progress, msg }: { progress: number; msg: string }) {
 }
 
 // ── Anime card ─────────────────────────────────────────────────────────────────
-function AnimeCard({ anime, favorites, onOpen, onToggleFav, selectedDayIdx, todayDayIdx, tz, animDelay = 0, tick = 0 }: {
+function AnimeCard({ anime, favorites, onOpen, onToggleFav, tz, animDelay = 0, tick = 0 }: {
   anime: Anime;
   favorites: number[];
   onOpen: (a: Anime) => void;
   onToggleFav: (id: number) => void;
-  selectedDayIdx: number;
-  todayDayIdx: number;
   tz: string;
   animDelay?: number;
   tick?: number;
 }) {
-  void tick;
+  void tick; // reading tick forces a re-render every 30 s so the countdown stays fresh
   const isFav = favorites.includes(anime.id);
   const [imgFailed, setImgFailed] = useState(false);
   const now = new Date();
@@ -559,7 +643,7 @@ function AnimeCard({ anime, favorites, onOpen, onToggleFav, selectedDayIdx, toda
       {isLive && <div className="anical-pulse" style={{ position:"absolute", top:10, right:40, width:7, height:7, borderRadius:"50%", background:GR }}/>}
       <div style={{ position:"relative", flexShrink:0, width:72, height:100, borderRadius:8, overflow:"hidden", background:BG4 }}>
         {anime.image_url && !imgFailed
-          ? <img src={anime.image_url} alt="" loading="lazy" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} onError={() => setImgFailed(true)}/>
+          ? <img src={anime.image_url} alt={anime.title} loading="lazy" decoding="async" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }} onError={() => setImgFailed(true)}/>
           : <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", fontSize:26, color:MT2 }}>🎬</div>}
         <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, transparent 45%, rgba(0,0,0,.72))" }}/>
         {anime.score && <div style={{ position:"absolute", bottom:4, left:0, right:0, textAlign:"center", fontSize:10, fontWeight:800, color:"#fff", textShadow:"0 1px 4px rgba(0,0,0,.9)" }}>★ {anime.score}</div>}
@@ -638,10 +722,10 @@ function TrailerPlayer({ animeId, imageUrl, noSpoiler }: { animeId: number; imag
   const imgStyle: React.CSSProperties = { width:"100%", height:220, objectFit:"cover", objectPosition:"top", borderRadius:14, marginBottom:16, background:BG4, display:"block" };
 
   // No-spoiler → static cover only
-  if (noSpoiler) return imageUrl ? <img src={imageUrl} alt="" style={imgStyle}/> : null;
+  if (noSpoiler) return imageUrl ? <img src={imageUrl} alt="Cover art" loading="lazy" decoding="async" style={imgStyle}/> : null;
 
   // Loading or no trailer → static cover
-  if (!ytId) return imageUrl ? <img src={imageUrl} alt="" style={imgStyle}/> : null;
+  if (!ytId) return imageUrl ? <img src={imageUrl} alt="Cover art" loading="lazy" decoding="async" style={imgStyle}/> : null;
 
   // Trailer stopped → YouTube thumbnail + play button
   if (!playing) {
@@ -682,10 +766,16 @@ function TrailerPlayer({ animeId, imageUrl, noSpoiler }: { animeId: number; imag
 }
 
 // ── Detail sheet ───────────────────────────────────────────────────────────────
-function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, noSpoiler, tz }: { anime: Anime | null; favorites: number[]; onClose: () => void; onToggleFav: (id: number) => void; onOpenCommunity: (a: Anime) => void; noSpoiler: boolean; tz: string }) {
+function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, noSpoiler, tz, onToast }: { anime: Anime | null; favorites: number[]; onClose: () => void; onToggleFav: (id: number) => void; onOpenCommunity: (a: Anime) => void; noSpoiler: boolean; tz: string; onToast: (m: string) => void }) {
   if (!anime) return null;
   const isFav = favorites.includes(anime.id);
   const localTime = jstToLocal(anime.broadcast_time, tz);
+  const handleShare = async () => {
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+    const r = await shareAnime(anime);
+    if (r === "copied") onToast("Link copied to clipboard ✓");
+    else if (r === false) onToast("Sharing not available");
+  };
   return (
     <>
       <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.82)", zIndex:200, animation:"fadeIn .2s ease-out", backdropFilter:"blur(6px)" } as React.CSSProperties} onClick={onClose}/>
@@ -715,18 +805,51 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, 
           <div style={{ fontSize:13, lineHeight:1.65, color:MT, marginBottom:16 }}>{anime.synopsis || "No synopsis available."}</div>
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             <div style={{ display:"flex", gap:8 }}>
-              <button style={{ flex:1, padding:12, borderRadius:10, border:`1px solid ${isFav ? OR : BD}`, background: isFav ? OR2 : BG3, color: isFav ? OR : MT, fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }} onClick={() => onToggleFav(anime.id)}>
+              <button aria-label={isFav ? "Remove from favorites" : "Add to favorites"} style={{ flex:1, padding:12, borderRadius:10, border:`1px solid ${isFav ? OR : BD}`, background: isFav ? OR2 : BG3, color: isFav ? OR : MT, fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }} onClick={() => onToggleFav(anime.id)}>
                 {isFav ? "★ Favorited" : "☆ Favorite"}
               </button>
               <button
-                style={{ flex:1, padding:12, borderRadius:10, border:`1px solid rgba(255,255,255,0.1)`, background:BG3, color:MT, fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:5 }}
+                aria-label="Open community discussion"
+                style={{ flex:1, padding:12, borderRadius:10, border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:5 }}
                 onClick={() => { onClose(); setTimeout(() => onOpenCommunity(anime), 120); }}
               >
                 <span>💬</span><span>Community</span>
               </button>
+              <button
+                aria-label="Share anime"
+                style={{ flexShrink:0, padding:"12px 14px", borderRadius:10, border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:15, cursor:"pointer", fontFamily:"inherit" }}
+                onClick={handleShare}
+              >
+                ↗
+              </button>
             </div>
-            <button style={{ width:"100%", padding:13, borderRadius:10, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:6, boxShadow:`0 6px 20px -4px rgba(255,107,26,.5)` }} onClick={() => openCrunchyroll(anime.title)}>
-              ▶ Watch on Crunchyroll
+
+            {/* Streaming platforms — try the app first, fallback to web */}
+            <div style={{ fontSize:10, fontWeight:800, color:MT, letterSpacing:".8px", textTransform:"uppercase", marginTop:6, marginBottom:2 }}>Where to watch</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:6 }}>
+              {PLATFORMS.slice(0, 4).map((p) => (
+                <button
+                  key={p.id}
+                  aria-label={`Open ${p.label}`}
+                  onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); openStreaming(p.id, anime.title); }}
+                  style={{
+                    padding:"11px 12px", borderRadius:10, border:`1px solid ${BD}`, background:BG3, color:TX,
+                    fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit",
+                    display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+                    transition:"transform .12s",
+                  }}
+                >
+                  <span style={{ fontSize:14 }}>{p.emoji}</span>
+                  <span style={{ color:p.color }}>{p.label}</span>
+                </button>
+              ))}
+            </div>
+            <button
+              aria-label="Search this title on YouTube"
+              onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); openStreaming("youtube", anime.title); }}
+              style={{ width:"100%", padding:10, borderRadius:10, border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", marginTop:2 }}
+            >
+              ▶️ More clips on YouTube
             </button>
           </div>
         </div>
@@ -751,9 +874,9 @@ function sortPosts(posts: CommunityPost[], mode: SortMode): CommunityPost[] {
   const copy = [...posts];
   if (mode === "hot") return copy.sort((a, b) => hotScore(b) - hotScore(a));
   if (mode === "top") return copy.sort((a, b) => {
-    const sa = Object.values(b.reactions).reduce((x,y)=>x+y,0);
-    const sb = Object.values(a.reactions).reduce((x,y)=>x+y,0);
-    return sa - sb;
+    const sa = Object.values(a.reactions).reduce((x,y)=>x+y,0);
+    const sb = Object.values(b.reactions).reduce((x,y)=>x+y,0);
+    return sb - sa; // descending: highest reactions first
   });
   return copy; // "new" — already ordered by created_at desc from API
 }
@@ -906,8 +1029,8 @@ function CommunitySheet({ anime, onClose }: { anime: Anime; onClose: () => void 
                   <div style={{ flex:1, padding:"14px 14px 12px 4px", minWidth:0 }}>
                     {/* Author */}
                     <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:8 }}>
-                      <Avatar nickname={post.nickname} color={post.avatar_color} size={22}/>
-                      <span style={{ fontSize:12, fontWeight:700, color: post.avatar_color }}>{post.nickname}</span>
+                      <Avatar nickname={post.nickname} color={safeAvatarColor(post.avatar_color)} size={22}/>
+                      <span style={{ fontSize:12, fontWeight:700, color: safeAvatarColor(post.avatar_color) }}>{post.nickname}</span>
                       <span style={{ fontSize:10, color:MT2 }}>· {formatNewsAge(post.created_at)}</span>
                     </div>
                     {/* Message */}
@@ -998,7 +1121,7 @@ function CommunitySheet({ anime, onClose }: { anime: Anime; onClose: () => void 
 }
 
 // ── Schedule view ──────────────────────────────────────────────────────────────
-function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavRef, schedule, favs, favFilter, search, tz, onOpen, onToggleFav, tick }: {
+function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavRef, schedule, favs, favFilter, search, tz, onOpen, onToggleFav, tick, topGenres, genreFilter, setGenreFilter }: {
   anime: Anime[];
   selectedDay: number;
   setSelectedDay: (d: number) => void;
@@ -1012,6 +1135,9 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
   onOpen: (a: Anime) => void;
   onToggleFav: (id: number) => void;
   tick: number;
+  topGenres: string[];
+  genreFilter: string | null;
+  setGenreFilter: (g: string | null) => void;
 }) {
   const today = new Date();
   const swipeStartX = useRef(0);
@@ -1072,15 +1198,47 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
         })}
       </div>
 
+      {/* Genre filter chips — top genres across the week */}
+      {topGenres.length > 0 && (
+        <div style={{ display:"flex", gap:6, padding:"0 16px 6px", overflowX:"auto", scrollbarWidth:"none" } as React.CSSProperties}>
+          <button
+            aria-label="Show all genres"
+            aria-pressed={genreFilter === null}
+            onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setGenreFilter(null); }}
+            style={{ flexShrink:0, padding:"6px 13px", borderRadius:99, border:`1px solid ${genreFilter === null ? OR : BD}`, background: genreFilter === null ? OR2 : BG3, color: genreFilter === null ? OR : MT, fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit", letterSpacing:".2px", transition:"all .15s" } as React.CSSProperties}
+          >All</button>
+          {topGenres.map((g) => {
+            const active = genreFilter === g;
+            return (
+              <button
+                key={g}
+                aria-label={`Filter by ${g}`}
+                aria-pressed={active}
+                onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setGenreFilter(active ? null : g); }}
+                style={{ flexShrink:0, padding:"6px 13px", borderRadius:99, border:`1px solid ${active ? OR : BD}`, background: active ? OR2 : BG3, color: active ? OR : MT, fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit", letterSpacing:".2px", transition:"all .15s" } as React.CSSProperties}
+              >
+                {g}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div
-        style={{ padding:"0 16px 16px" }}
+        style={{ padding:"0 16px 16px", touchAction:"pan-y" } as React.CSSProperties}
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
       >
         {anime.length === 0 ? (
           <div style={{ textAlign:"center", padding:"48px 20px", color:MT, display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
-            <div style={{ fontSize:40 }}>{favFilter ? "⭐" : "📭"}</div>
-            <div style={{ fontSize:14, lineHeight:1.5 }}>{favFilter ? "No favorites airing.\nTurn off filter to see all." : "Nothing scheduled."}</div>
+            <div style={{ fontSize:40 }}>{favFilter ? "⭐" : genreFilter ? "🔎" : "📭"}</div>
+            <div style={{ fontSize:14, lineHeight:1.5, whiteSpace:"pre-line" }}>{favFilter ? "No favorites airing.\nTurn off filter to see all." : genreFilter ? `No ${genreFilter} anime\nairing this day.` : "Nothing scheduled."}</div>
+            {(favFilter || genreFilter) && (
+              <button
+                onClick={() => { setGenreFilter(null); }}
+                style={{ marginTop:6, padding:"8px 18px", borderRadius:99, background:BG3, border:`1px solid ${BD}`, color:OR, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+              >Clear filters</button>
+            )}
           </div>
         ) : (
           Object.entries(groups).map(([time, items]) => {
@@ -1110,7 +1268,7 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
                   <div style={{ flex:1, height:1, background:BD }}/>
                 </div>
                 {items.map((a, idx) => (
-                  <AnimeCard key={a.id} anime={a} favorites={favs} selectedDayIdx={selectedDay} todayDayIdx={todayDayIdx} tz={tz} onOpen={onOpen} onToggleFav={onToggleFav} animDelay={idx * 30} tick={tick}/>
+                  <AnimeCard key={a.id} anime={a} favorites={favs} tz={tz} onOpen={onOpen} onToggleFav={onToggleFav} animDelay={idx * 30} tick={tick}/>
                 ))}
               </div>
             );
@@ -1203,7 +1361,6 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, onOpenCommunit
           {cells.map((date, ci) => {
             const inMonth = date.getMonth() === mMon;
             const isToday = inMonth && date.toDateString() === now.toDateString();
-            const isSelected = inMonth && date.toDateString() === selectedDate.toDateString();
             const dayIdx = (date.getDay() + 6) % 7;
             const airingCount = inMonth ? getAiringCount(dayIdx) : 0;
             const favCount    = inMonth ? getFavCount(dayIdx) : 0;
@@ -1229,13 +1386,17 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, onOpenCommunit
       {/* ── Upcoming this season ── */}
       {(seasonUpcoming.length > 0 || upcomingLoading) && (
         <div style={{ marginBottom:16 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
             <span style={{ fontSize:11, fontWeight:800, letterSpacing:".5px", textTransform:"uppercase", padding:"4px 10px", borderRadius:99, background:"rgba(139,92,246,.12)", color:"rgba(167,139,250,1)", border:"1px solid rgba(139,92,246,.3)", flexShrink:0 }}>
               {SEASON_EMOJI[currentSeason]} {seasonYear(currentSeason, mYear)} · Upcoming
             </span>
             <div style={{ flex:1, height:1, background:BD }}/>
             {!upcomingLoading && <span style={{ fontSize:10, color:MT2, flexShrink:0 }}>{seasonUpcoming.length} announced</span>}
           </div>
+          {(() => {
+            const cd = seasonCountdown(currentSeason, mYear);
+            return cd ? <div style={{ fontSize:11, color:"rgba(167,139,250,.85)", fontWeight:600, marginBottom:10, paddingLeft:2 }}>Season {cd}</div> : null;
+          })()}
           {upcomingLoading ? (
             <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4 }}>
               {[0,1,2].map(i => <div key={i} className="anical-skel" style={{ width:120, height:160, borderRadius:12, flexShrink:0 }}/>)}
@@ -1245,22 +1406,28 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, onOpenCommunit
               {seasonUpcoming.map((a, i) => {
                 const starred = upcomingStars.includes(a.id);
                 return (
-                  <div key={a.id} style={{ flexShrink:0, width:110, background: starred ? `rgba(255,107,26,.07)` : BG2, border:`1px solid ${starred ? OR3 : "rgba(139,92,246,.2)"}`, borderRadius:12, overflow:"hidden", cursor:"pointer", animation:`cardIn .35s ${i*40}ms both`, position:"relative" }}
-                    onClick={() => onOpenCommunity({ id:a.id, title:a.title, image_url:a.imageUrl ?? null })}>
+                  <button
+                    key={a.id}
+                    aria-label={`Open community for ${a.title}`}
+                    onClick={() => onOpenCommunity({ id:a.id, title:a.title, image_url:a.imageUrl ?? null })}
+                    style={{ flexShrink:0, width:118, background: starred ? `rgba(255,107,26,.07)` : BG2, border:`1px solid ${starred ? OR3 : "rgba(139,92,246,.2)"}`, borderRadius:12, overflow:"hidden", cursor:"pointer", animation:`cardIn .35s ${i*40}ms both`, position:"relative", padding:0, fontFamily:"inherit", textAlign:"left" as const, color:TX }}
+                  >
                     {a.imageUrl
-                      ? <img src={a.imageUrl} alt="" style={{ width:"100%", height:140, objectFit:"cover", display:"block" }}/>
-                      : <div style={{ width:"100%", height:140, background:BG4, display:"flex", alignItems:"center", justifyContent:"center", fontSize:28 }}>🎬</div>}
+                      ? <img src={a.imageUrl} alt={a.title} loading="lazy" decoding="async" style={{ width:"100%", height:150, objectFit:"cover", display:"block" }}/>
+                      : <div style={{ width:"100%", height:150, background:BG4, display:"flex", alignItems:"center", justifyContent:"center", fontSize:28 }}>🎬</div>}
                     <div style={{ position:"absolute", top:6, right:6 }}>
-                      <button onClick={(e) => { e.stopPropagation(); toggleUpcomingStar(a.id); }}
-                        style={{ background:"rgba(0,0,0,.6)", border:"none", color: starred ? OR : "rgba(255,255,255,.6)", fontSize:14, cursor:"pointer", padding:"2px 4px", lineHeight:1, borderRadius:6, fontFamily:"inherit" }}>
+                      <button
+                        aria-label={starred ? `Remove ${a.title} from upcoming favorites` : `Star ${a.title}`}
+                        onClick={(e) => { e.stopPropagation(); Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); toggleUpcomingStar(a.id); }}
+                        style={{ background:"rgba(0,0,0,.6)", border:"none", color: starred ? OR : "rgba(255,255,255,.85)", fontSize:14, cursor:"pointer", padding:"4px 7px", lineHeight:1, borderRadius:6, fontFamily:"inherit" }}>
                         {starred ? "★" : "☆"}
                       </button>
                     </div>
-                    <div style={{ padding:"6px 8px 8px" }}>
-                      <div style={{ fontSize:11, fontWeight:700, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const }}>{a.title}</div>
-                      <div style={{ fontSize:9, color:"rgba(167,139,250,.8)", fontWeight:700, marginTop:3 }}>~{MONTHS[SEASON_MONTHS[currentSeason]]} {mYear}</div>
+                    <div style={{ padding:"7px 8px 9px" }}>
+                      <div style={{ fontSize:11, fontWeight:700, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, minHeight:28 }}>{a.title}</div>
+                      <div style={{ fontSize:9, color:"rgba(167,139,250,.85)", fontWeight:700, marginTop:4 }}>~{MONTHS[SEASON_MONTHS[currentSeason]].slice(0,3)} {mYear}</div>
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -1985,6 +2152,107 @@ function BottomNav({ view, setView, favCount }: { view: string; setView: (v: "sc
   );
 }
 
+// ── Onboarding (first launch only) ─────────────────────────────────────────────
+const ONBOARDING_STEPS = [
+  {
+    emoji: "📋",
+    title: "Track every show",
+    desc: "AniCal pulls live data from MyAnimeList & the official anime industry feed. Tap the star to add a show to your watchlist.",
+    accent: OR,
+  },
+  {
+    emoji: "🔔",
+    title: "Never miss an episode",
+    desc: "Get a heads-up notification when an episode drops in your timezone. Lead time is fully configurable.",
+    accent: "#a78bfa",
+  },
+  {
+    emoji: "💬",
+    title: "Anonymous community",
+    desc: "Pick a nickname, share reactions, and discuss episodes with other fans — no signup, no tracking.",
+    accent: "#22c55e",
+  },
+  {
+    emoji: "🍥",
+    title: "Watch anywhere",
+    desc: "One tap opens Crunchyroll, Netflix, HIDIVE or Hulu — directly in their native app if installed.",
+    accent: "#F47521",
+  },
+];
+
+function Onboarding({ onDone }: { onDone: () => void }) {
+  const [step, setStep] = useState(0);
+  const s = ONBOARDING_STEPS[step];
+  const isLast = step === ONBOARDING_STEPS.length - 1;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Welcome to AniCal"
+      style={{
+        position:"fixed", inset:0, zIndex:9000, background:BG,
+        display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+        padding:"24px 22px 32px", textAlign:"center",
+        paddingTop:"calc(env(safe-area-inset-top, 0px) + 24px)",
+        paddingBottom:"calc(env(safe-area-inset-bottom, 0px) + 32px)",
+      }}
+    >
+      <div style={{ position:"absolute", inset:0, background:`radial-gradient(circle at 50% 30%, ${s.accent}33, transparent 60%)`, pointerEvents:"none", transition:"background .4s" }}/>
+
+      {/* Skip */}
+      <button
+        aria-label="Skip onboarding"
+        onClick={onDone}
+        style={{ position:"absolute", top:"calc(env(safe-area-inset-top, 0px) + 14px)", right:18, background:"none", border:"none", color:MT2, fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit", padding:8 }}
+      >
+        Skip
+      </button>
+
+      {/* Content */}
+      <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", maxWidth:340, animation:"fadeIn .35s" } as React.CSSProperties} key={step}>
+        <div
+          style={{
+            width:120, height:120, borderRadius:30, background:`linear-gradient(135deg, ${s.accent}, ${s.accent}aa)`,
+            display:"flex", alignItems:"center", justifyContent:"center", marginBottom:32,
+            boxShadow:`0 12px 40px -8px ${s.accent}66`, animation:"popIn .4s cubic-bezier(.2,.7,.2,1)",
+          }}
+        >
+          <span style={{ fontSize:64, lineHeight:1 }}>{s.emoji}</span>
+        </div>
+        <h2 style={{ fontSize:26, fontWeight:900, color:TX, letterSpacing:"-.5px", margin:"0 0 12px", lineHeight:1.2 }}>{s.title}</h2>
+        <p style={{ fontSize:14, color:MT, lineHeight:1.65, margin:0 }}>{s.desc}</p>
+      </div>
+
+      {/* Dots */}
+      <div style={{ display:"flex", gap:8, marginBottom:24 }}>
+        {ONBOARDING_STEPS.map((_, i) => (
+          <div key={i} style={{ width: i === step ? 24 : 8, height:8, borderRadius:99, background: i === step ? s.accent : BD2, transition:"all .25s" }}/>
+        ))}
+      </div>
+
+      {/* Buttons */}
+      <div style={{ display:"flex", gap:10, width:"100%", maxWidth:340 }}>
+        {step > 0 && (
+          <button
+            aria-label="Previous step"
+            onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setStep((v) => Math.max(0, v - 1)); }}
+            style={{ flex:1, padding:"14px 18px", borderRadius:14, border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+          >
+            Back
+          </button>
+        )}
+        <button
+          aria-label={isLast ? "Get started with AniCal" : "Next step"}
+          onClick={() => { Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {}); if (isLast) onDone(); else setStep((v) => v + 1); }}
+          style={{ flex:2, padding:"14px 18px", borderRadius:14, border:"none", background:`linear-gradient(135deg, ${s.accent}, ${s.accent}cc)`, color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer", fontFamily:"inherit", boxShadow:`0 8px 24px -6px ${s.accent}aa`, transition:"transform .12s" }}
+        >
+          {isLast ? "Let's go ✨" : "Next →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Pull indicator ─────────────────────────────────────────────────────────────
 function PullIndicator({ visible, spinning }: { visible: boolean; spinning: boolean }) {
   const show = visible || spinning;
@@ -2012,6 +2280,7 @@ export default function AniCal() {
   const [favs, setFavs] = useState<number[]>([]);
   const [favFilter, setFavFilter] = useState(false);
   const [search, setSearch] = useState("");
+  const [genreFilter, setGenreFilter] = useState<string | null>(null);
   const [detailAnime, setDetailAnime] = useState<Anime | null>(null);
   const [communityAnime, setCommunityAnime] = useState<Anime | null>(null);
   const [toast, setToast] = useState({ show: false, msg: "" });
@@ -2021,6 +2290,7 @@ export default function AniCal() {
     return d;
   });
   const [noSpoiler, setNoSpoiler] = useState<boolean>(() => LS.get<boolean>("anical_no_spoiler", false));
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(() => !LS.get<boolean>("anical_onboarded_v1", false));
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const tz = "auto";
@@ -2206,9 +2476,17 @@ export default function AniCal() {
     const seen = new Set<number>();
     let list = (schedule[DAYS[dayIdx]] || []).filter((a) => { if (seen.has(a.id)) return false; seen.add(a.id); return true; });
     if (favFilter) list = list.filter((a) => favs.includes(a.id));
+    if (genreFilter) list = list.filter((a) => (a.genres || []).includes(genreFilter));
     if (search) { const q = search.toLowerCase(); list = list.filter((a) => a.title.toLowerCase().includes(q)); }
     return list.sort((a, b) => (a.broadcast_time || "").localeCompare(b.broadcast_time || ""));
-  }, [schedule, favFilter, search, favs]);
+  }, [schedule, favFilter, genreFilter, search, favs]);
+
+  // Top genres across the whole week — used for filter chips
+  const topGenres = useMemo(() => {
+    const map: Record<string, number> = {};
+    Object.values(schedule).flat().forEach((a) => (a.genres || []).forEach((g) => { map[g] = (map[g] || 0) + 1; }));
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([g]) => g);
+  }, [schedule]);
 
   const favAnime = useMemo(() =>
     DAYS.flatMap((d, i) => (schedule[d] || []).filter((a) => favs.includes(a.id)).map((a) => ({ ...a, dayIdx: i })))
@@ -2271,6 +2549,10 @@ export default function AniCal() {
 
       {splashVisible && <Splash fadingOut={splashFading}/>}
 
+      {!splashVisible && showOnboarding && (
+        <Onboarding onDone={() => { setShowOnboarding(false); LS.set("anical_onboarded_v1", true); }}/>
+      )}
+
       {boot === "loading" && (
         <div style={{ fontFamily:"'Outfit',system-ui,sans-serif", background:BG, minHeight:"100vh", color:TX, maxWidth:480, margin:"0 auto", position:"relative" }}>
           <LoadingView progress={loadProgress} msg={loadMsg}/>
@@ -2279,11 +2561,20 @@ export default function AniCal() {
 
       {boot === "error" && (
         <div style={{ fontFamily:"'Outfit',system-ui,sans-serif", background:BG, minHeight:"100vh", color:TX, maxWidth:480, margin:"0 auto", position:"relative" }}>
-          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"60px 20px", gap:16, minHeight:"50vh" }}>
-            <div style={{ fontSize:40 }}>⚠️</div>
-            <div style={{ fontSize:16, fontWeight:600 }}>Failed to load</div>
-            <div style={{ fontSize:12, color:MT, textAlign:"center", lineHeight:1.6 }}>{error}</div>
-            <button style={{ background:BG3, border:`1px solid ${OR}`, color:OR, borderRadius:10, padding:"9px 20px", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"inherit", marginTop:8 }} onClick={() => loadSchedule(true)}>Try Again</button>
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"60px 24px", gap:14, minHeight:"60vh", textAlign:"center" }}>
+            <div style={{ fontSize:64, marginBottom:8 }}>{typeof navigator !== "undefined" && !navigator.onLine ? "📡" : "⚠️"}</div>
+            <div style={{ fontSize:20, fontWeight:800, letterSpacing:"-.3px" }}>{typeof navigator !== "undefined" && !navigator.onLine ? "You're offline" : "Couldn't load schedule"}</div>
+            <div style={{ fontSize:13, color:MT, lineHeight:1.65, maxWidth:300 }}>
+              {typeof navigator !== "undefined" && !navigator.onLine
+                ? "AniCal needs an internet connection to load fresh anime data. Once you're back online, tap retry."
+                : "MyAnimeList might be rate-limiting us, or there's a network issue. Give it another go in a few seconds."}
+            </div>
+            {error && <div style={{ fontSize:11, color:MT2, fontStyle:"italic", maxWidth:280, marginTop:-4 }}>{error}</div>}
+            <button
+              aria-label="Retry loading schedule"
+              style={{ background:`linear-gradient(135deg, ${OR}, #cc5610)`, border:"none", color:"#fff", borderRadius:12, padding:"12px 28px", fontSize:14, fontWeight:800, cursor:"pointer", fontFamily:"inherit", marginTop:8, boxShadow:`0 6px 20px -4px rgba(255,107,26,.5)` }}
+              onClick={() => { Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {}); loadSchedule(true); }}
+            >↻ Try again</button>
           </div>
         </div>
       )}
@@ -2296,7 +2587,7 @@ export default function AniCal() {
           onTouchEnd={onTouchEnd}
         >
           {/* ── Premium Header ── */}
-          <div style={{ position:"sticky", top:0, zIndex:50, background:"var(--c-hdr)", backdropFilter:"blur(32px) saturate(1.6)", borderBottom:`1px solid ${BD}` } as React.CSSProperties}>
+          <div style={{ position:"sticky", top:0, zIndex:50, background:"var(--c-hdr)", backdropFilter:"blur(32px) saturate(1.6)", borderBottom:`1px solid ${BD}`, paddingTop:"env(safe-area-inset-top, 0px)" } as React.CSSProperties}>
             {/* Brand row */}
             <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 16px 10px" }}>
               <div style={{ display:"flex", alignItems:"center", gap:9 }}>
@@ -2313,8 +2604,10 @@ export default function AniCal() {
                 {/* Favs filter — only on schedule */}
                 {view === "schedule" && (
                   <button
-                    onClick={() => setFavFilter((v) => !v)}
-                    style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 12px", borderRadius:20, border:`1px solid ${favFilter ? OR : BD}`, background: favFilter ? `linear-gradient(135deg, ${OR2}, rgba(255,107,26,0.12))` : BG3, color: favFilter ? OR : MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", transition:"all .18s", boxShadow: favFilter ? `0 0 12px rgba(255,107,26,.25)` : "none", letterSpacing:".3px" } as React.CSSProperties}
+                    aria-label={favFilter ? "Showing favorites only — tap to show all" : "Show only favorites"}
+                    aria-pressed={favFilter}
+                    onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setFavFilter((v) => !v); }}
+                    style={{ display:"flex", alignItems:"center", gap:5, padding:"9px 14px", minHeight:38, borderRadius:20, border:`1px solid ${favFilter ? OR : BD}`, background: favFilter ? `linear-gradient(135deg, ${OR2}, rgba(255,107,26,0.12))` : BG3, color: favFilter ? OR : MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", transition:"all .18s", boxShadow: favFilter ? `0 0 12px rgba(255,107,26,.25)` : "none", letterSpacing:".3px" } as React.CSSProperties}
                   >
                     <span style={{ fontSize:13 }}>{favFilter ? "★" : "☆"}</span>
                     <span>Favs</span>
@@ -2322,15 +2615,19 @@ export default function AniCal() {
                 )}
                 {/* No-spoiler toggle — always visible */}
                 <button
+                  aria-label={noSpoiler ? "No-spoiler mode on — tap to disable" : "Enable no-spoiler mode (hide trailers and rumors)"}
+                  aria-pressed={noSpoiler}
                   onClick={() => { setNoSpoiler((v) => !v); Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); }}
                   title={noSpoiler ? "No-spoiler on — trailers hidden" : "No-spoiler off — trailers shown"}
-                  style={{ width:34, height:34, borderRadius:"50%", border:`1px solid ${noSpoiler ? "rgba(139,92,246,.5)" : BD}`, background: noSpoiler ? "rgba(139,92,246,.14)" : BG3, color: noSpoiler ? "rgba(167,139,250,1)" : MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s", flexShrink:0 } as React.CSSProperties}
+                  style={{ width:38, height:38, borderRadius:"50%", border:`1px solid ${noSpoiler ? "rgba(139,92,246,.5)" : BD}`, background: noSpoiler ? "rgba(139,92,246,.14)" : BG3, color: noSpoiler ? "rgba(167,139,250,1)" : MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s", flexShrink:0 } as React.CSSProperties}
                 >{noSpoiler ? "🙈" : "👁"}</button>
                 {/* Dark / light toggle — always visible */}
                 <button
+                  aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+                  aria-pressed={!dark}
                   onClick={() => { setDark((v) => !v); Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); }}
                   title={dark ? "Switch to light mode" : "Switch to dark mode"}
-                  style={{ width:34, height:34, borderRadius:"50%", border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s", flexShrink:0 } as React.CSSProperties}
+                  style={{ width:38, height:38, borderRadius:"50%", border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s", flexShrink:0 } as React.CSSProperties}
                 >{dark ? "☀️" : "🌙"}</button>
               </div>
             </div>
@@ -2396,6 +2693,9 @@ export default function AniCal() {
                 onOpen={setDetailAnime}
                 onToggleFav={toggleFav}
                 tick={tick}
+                topGenres={topGenres}
+                genreFilter={genreFilter}
+                setGenreFilter={setGenreFilter}
               />
             )}
             {view === "month" && (
@@ -2433,7 +2733,8 @@ export default function AniCal() {
             <DetailSheet anime={detailAnime} favorites={favs} tz={tz} noSpoiler={noSpoiler}
               onClose={() => setDetailAnime(null)}
               onToggleFav={(id: number) => { toggleFav(id); setDetailAnime((a) => (a ? { ...a } : null)); }}
-              onOpenCommunity={(a) => { setDetailAnime(null); setCommunityAnime(a); }}/>
+              onOpenCommunity={(a) => { setDetailAnime(null); setCommunityAnime(a); }}
+              onToast={showToast}/>
           )}
 
           {/* Community thread sheet */}
