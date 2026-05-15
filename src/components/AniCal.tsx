@@ -2218,7 +2218,7 @@ function NewsView({ favAnime, noSpoiler }: { favAnime: any[]; noSpoiler: boolean
                 <div style={{ fontSize:13, fontWeight:700, color:TX, marginBottom:4 }}>No-spoiler mode is on</div>
                 <div style={{ fontSize:12, color:MT, marginBottom:14, lineHeight:1.5 }}>
                   Rumors & leaks are hidden to keep your experience spoiler-free.<br/>
-                  Toggle <strong>👁</strong> in the header to show them globally, or tap below to reveal once.
+                  Toggle the <strong style={{ color:"rgba(167,139,250,1)" }}>eye icon</strong> in the header to show them globally, or tap below to reveal once.
                 </div>
                 <button
                   onClick={() => setRumorRevealed(true)}
