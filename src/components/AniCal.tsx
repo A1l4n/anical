@@ -516,6 +516,96 @@ function StarLogo({ size = 26, color = OR }: { size?: number; color?: string }) 
   );
 }
 
+// ── Icon library ───────────────────────────────────────────────────────────────
+// Clean, crisp 24×24 SVG icons. Use Icon name="schedule" to swap in the right glyph.
+type IconName =
+  | "schedule" | "upcoming" | "community" | "news" | "mylist"
+  | "star" | "starFilled" | "heart" | "heartFilled"
+  | "search" | "close" | "back" | "chevronDown" | "chevronUp" | "chevronRight" | "chevronLeft"
+  | "share" | "play" | "stop" | "bell" | "bellOff" | "eye" | "eyeOff"
+  | "sun" | "moon" | "refresh" | "settings" | "clock" | "calendar"
+  | "filter" | "trending" | "live" | "check" | "spoiler" | "external";
+
+function Icon({ name, size = 22, color = "currentColor", strokeWidth = 2 }: { name: IconName; size?: number; color?: string; strokeWidth?: number }) {
+  const s = size;
+  const sw = strokeWidth;
+  const common = { width: s, height: s, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: sw, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  switch (name) {
+    case "schedule":   // calendar with grid
+      return <svg {...common}><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 3v4M16 3v4"/><circle cx="8" cy="14" r=".8" fill={color} stroke="none"/><circle cx="12" cy="14" r=".8" fill={color} stroke="none"/><circle cx="16" cy="14" r=".8" fill={color} stroke="none"/></svg>;
+    case "upcoming":   // sparkle
+      return <svg {...common}><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/><path d="M18.5 15l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z"/></svg>;
+    case "community":  // bubble with dots
+      return <svg {...common}><path d="M21 12a8 8 0 0 1-8 8 8.2 8.2 0 0 1-3.5-.8L4 20l1-4.5A8 8 0 1 1 21 12z"/><circle cx="9" cy="12" r="1" fill={color} stroke="none"/><circle cx="13" cy="12" r="1" fill={color} stroke="none"/><circle cx="17" cy="12" r="1" fill={color} stroke="none"/></svg>;
+    case "news":       // newspaper
+      return <svg {...common}><path d="M4 5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v14l-2.5-1.3L14 19l-2.5-1.3L9 19l-2.5-1.3L4 19V5z"/><path d="M8 8h7M8 12h7M8 16h4"/></svg>;
+    case "mylist":     // bookmark star
+      return <svg {...common}><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/><path d="M12 8l1 2.2 2.4.3-1.7 1.7.4 2.4L12 13.5l-2.1 1.1.4-2.4L8.6 10.5l2.4-.3L12 8z" fill={color}/></svg>;
+    case "star":
+      return <svg {...common}><path d="M12 3.5l2.4 6.3h6.6L15.7 14l2 6.3L12 16.2 6.3 20l2-6.3L3 9.8h6.6L12 3.5z"/></svg>;
+    case "starFilled":
+      return <svg width={s} height={s} viewBox="0 0 24 24" fill={color}><path d="M12 3.5l2.4 6.3h6.6L15.7 14l2 6.3L12 16.2 6.3 20l2-6.3L3 9.8h6.6L12 3.5z"/></svg>;
+    case "heart":
+      return <svg {...common}><path d="M20.8 8.6a5.4 5.4 0 0 0-9.3-3.8 5.4 5.4 0 0 0-9.3 3.8c0 4.6 5.7 8 9.3 11.2 3.6-3.2 9.3-6.6 9.3-11.2z"/></svg>;
+    case "heartFilled":
+      return <svg width={s} height={s} viewBox="0 0 24 24" fill={color}><path d="M20.8 8.6a5.4 5.4 0 0 0-9.3-3.8 5.4 5.4 0 0 0-9.3 3.8c0 4.6 5.7 8 9.3 11.2 3.6-3.2 9.3-6.6 9.3-11.2z"/></svg>;
+    case "search":
+      return <svg {...common}><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>;
+    case "close":
+      return <svg {...common}><path d="M6 6l12 12M18 6L6 18"/></svg>;
+    case "back":
+      return <svg {...common}><path d="M15 5l-7 7 7 7"/></svg>;
+    case "chevronDown":
+      return <svg {...common}><path d="M6 9l6 6 6-6"/></svg>;
+    case "chevronUp":
+      return <svg {...common}><path d="M6 15l6-6 6 6"/></svg>;
+    case "chevronRight":
+      return <svg {...common}><path d="M9 6l6 6-6 6"/></svg>;
+    case "chevronLeft":
+      return <svg {...common}><path d="M15 6l-6 6 6 6"/></svg>;
+    case "share":
+      return <svg {...common}><path d="M12 4v12M7 9l5-5 5 5"/><path d="M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/></svg>;
+    case "play":
+      return <svg width={s} height={s} viewBox="0 0 24 24" fill={color}><path d="M7 5l12 7-12 7V5z"/></svg>;
+    case "stop":
+      return <svg width={s} height={s} viewBox="0 0 24 24" fill={color}><rect x="6" y="6" width="12" height="12" rx="2"/></svg>;
+    case "bell":
+      return <svg {...common}><path d="M6 8a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7z"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>;
+    case "bellOff":
+      return <svg {...common}><path d="M3 3l18 18M8.7 5.3A6 6 0 0 1 18 8c0 3 .6 4.9 1.2 6M6 8c0 6-2 7-2 7h13"/><path d="M10 19a2 2 0 0 0 4 0"/></svg>;
+    case "eye":
+      return <svg {...common}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>;
+    case "eyeOff":
+      return <svg {...common}><path d="M3 3l18 18M10.6 6.2A10 10 0 0 1 12 6c6.5 0 10 6 10 6s-1 1.8-2.7 3.5M6.6 6.7C3.6 8.6 2 12 2 12s3.5 7 10 7c1.2 0 2.3-.2 3.3-.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>;
+    case "spoiler":
+      return <svg {...common}><path d="M3 3l18 18M10.5 6.2A10 10 0 0 1 12 6c6.5 0 10 6 10 6a13 13 0 0 1-1.7 2.2M14.1 14a3 3 0 0 1-4.2-4.2"/><path d="M6 7C3.5 8.7 2 12 2 12s3.5 7 10 7a9 9 0 0 0 3.6-.8"/></svg>;
+    case "sun":
+      return <svg {...common}><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>;
+    case "moon":
+      return <svg {...common}><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>;
+    case "refresh":
+      return <svg {...common}><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 4v4h-4M21 12a9 9 0 0 1-15 6.7L3 16M3 20v-4h4"/></svg>;
+    case "settings":
+      return <svg {...common}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>;
+    case "clock":
+      return <svg {...common}><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>;
+    case "calendar":
+      return <svg {...common}><rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M8 3v4M16 3v4"/></svg>;
+    case "filter":
+      return <svg {...common}><path d="M3 5h18l-7 8v6l-4 2v-8L3 5z"/></svg>;
+    case "trending":
+      return <svg {...common}><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>;
+    case "live":
+      return <svg width={s} height={s} viewBox="0 0 24 24" fill={color}><circle cx="12" cy="12" r="6"/></svg>;
+    case "check":
+      return <svg {...common}><path d="M5 12l5 5L20 7"/></svg>;
+    case "external":
+      return <svg {...common}><path d="M14 4h6v6M20 4l-9 9M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>;
+    default:
+      return null;
+  }
+}
+
 // ── Splash ─────────────────────────────────────────────────────────────────────
 function Splash({ fadingOut }: { fadingOut: boolean }) {
   return (
@@ -1279,17 +1369,22 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
   );
 }
 
-// ── Month view ─────────────────────────────────────────────────────────────────
-function MonthView({ monthOffset, setMonthOffset, schedule, favs, onOpenCommunity }: {
-  monthOffset: number;
-  setMonthOffset: (fn: (v: number) => number) => void;
+// ── Upcoming view ──────────────────────────────────────────────────────────────
+// Redesigned: no more confusing month calendar grid. Just a clean season
+// countdown banner + filterable card grid of announced shows, with optional
+// "Next season" preview.
+function MonthView({ schedule: _schedule, favs: _favs, onOpenCommunity }: {
+  // monthOffset / setMonthOffset kept for prop-compat with parent; unused
+  monthOffset?: number;
+  setMonthOffset?: (fn: (v: number) => number) => void;
   schedule: Schedule;
   favs: number[];
   onOpenCommunity: (a: Anime) => void;
 }) {
+  void _schedule; void _favs;
   const now = new Date();
 
-  // ── Upcoming data (self-loaded) ──
+  // Upcoming data
   const [upcoming, setUpcoming] = useState<UpcomingAnime[]>(() => {
     const c = LS.get<{ ts: number; data: UpcomingAnime[] } | null>("anical_upcoming_cache", null);
     return c && Date.now() - c.ts < UPCOMING_TTL ? c.data : [];
@@ -1309,6 +1404,7 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, onOpenCommunit
   }, [upcomingLoading]);
 
   const toggleUpcomingStar = (id: number) => {
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
     setUpcomingStars((prev) => {
       const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
       LS.set("anical_upcoming_stars", next);
@@ -1316,125 +1412,220 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, onOpenCommunit
     });
   };
 
-  const [calCollapsed, setCalCollapsed] = useState(false);
-  const monthDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
-  const [mYear, mMon] = [monthDate.getFullYear(), monthDate.getMonth()];
-  const currentSeason = monthToSeason(mMon);
-  const firstDow = monthDate.getDay();
-  const lastDay = new Date(mYear, mMon + 1, 0).getDate();
-  const cells: Date[] = [];
-  for (let i = -firstDow; i < lastDay; i++) cells.push(new Date(mYear, mMon, i + 1));
-  while (cells.length % 7) cells.push(new Date(mYear, mMon + 1, cells.length - lastDay - firstDow + 1));
+  // Compute current and next season
+  const thisSeason = monthToSeason(now.getMonth());
+  const thisSeasonYear = now.getFullYear();
+  // The "next season" is the season after the current one
+  const seasonOrder: Season[] = ["winter", "spring", "summer", "fall"];
+  const thisIdx = seasonOrder.indexOf(thisSeason);
+  const nextSeason = seasonOrder[(thisIdx + 1) % 4];
+  const nextSeasonYear = nextSeason === "winter" && thisSeason === "fall" ? thisSeasonYear + 1 : thisSeasonYear;
 
-  // Dots on the grid show how many shows air that weekday (favourites in orange)
-  const getAiringCount = (dayIdx: number) => (schedule[DAYS[dayIdx]] || []).length;
-  const getFavCount    = (dayIdx: number) => (schedule[DAYS[dayIdx]] || []).filter((a) => favs.includes(a.id)).length;
+  // Filter state — "next" | "soon" | "all"
+  const [filter, setFilter] = useState<"next" | "soon" | "all" | "starred">("next");
 
-  // Upcoming for this season — also include adjacent seasons from same month range
-  const seasonUpcoming = upcoming.filter((a) => {
+  // Buckets
+  const matchSeason = (a: UpcomingAnime, season: Season, year: number) =>
+    a.season?.toLowerCase() === season && a.year === year;
+
+  const nextSeasonItems = upcoming.filter((a) => matchSeason(a, nextSeason, nextSeasonYear));
+  const allItems = upcoming;
+  const starredItems = upcoming.filter((a) => upcomingStars.includes(a.id));
+  // "Soon" = next 60 days from a season start
+  const soonItems = upcoming.filter((a) => {
     if (!a.season || !a.year) return false;
-    return a.season.toLowerCase() === currentSeason && a.year === mYear;
+    const start = new Date(a.year, SEASON_MONTHS[a.season.toLowerCase() as Season] || 0, 1);
+    const days = Math.floor((start.getTime() - now.getTime()) / 86_400_000);
+    return days >= -7 && days <= 60;
   });
-  // Season approximate start date (1st of season start month)
-  const seasonStartMonth = SEASON_MONTHS[currentSeason];
-  const isSeasonStartMonth = mMon === seasonStartMonth;
+
+  const filteredItems = filter === "next" ? nextSeasonItems : filter === "soon" ? soonItems : filter === "starred" ? starredItems : allItems;
+  const groupedBySeasonYear: Record<string, UpcomingAnime[]> = {};
+  filteredItems.forEach((a) => {
+    if (!a.season || !a.year) return;
+    const k = `${a.season.toLowerCase()}-${a.year}`;
+    if (!groupedBySeasonYear[k]) groupedBySeasonYear[k] = [];
+    groupedBySeasonYear[k].push(a);
+  });
+  const seasonGroups = Object.entries(groupedBySeasonYear).sort(([a], [b]) => {
+    const [sA, yA] = a.split("-"); const [sB, yB] = b.split("-");
+    if (yA !== yB) return Number(yA) - Number(yB);
+    return seasonOrder.indexOf(sA as Season) - seasonOrder.indexOf(sB as Season);
+  });
+
+  const nextCountdown = seasonCountdown(nextSeason, nextSeasonYear);
+
+  // Filter pill component
+  const FilterPill = ({ id, label, count }: { id: typeof filter; label: string; count?: number }) => {
+    const active = filter === id;
+    return (
+      <button
+        aria-pressed={active}
+        onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setFilter(id); }}
+        style={{
+          flexShrink:0, padding:"8px 14px", borderRadius:99,
+          border:`1px solid ${active ? "rgba(139,92,246,.6)" : BD}`,
+          background: active ? "rgba(139,92,246,.14)" : BG3,
+          color: active ? "rgba(167,139,250,1)" : MT,
+          fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit",
+          letterSpacing:".2px", transition:"all .18s",
+          display:"inline-flex", alignItems:"center", gap:6,
+          boxShadow: active ? "0 0 12px rgba(139,92,246,.2)" : "none",
+        } as React.CSSProperties}
+      >
+        <span>{label}</span>
+        {count !== undefined && (
+          <span style={{ fontSize:10, fontWeight:800, padding:"1px 6px", borderRadius:99, background: active ? "rgba(139,92,246,.25)" : BG4, color: active ? "rgba(167,139,250,1)" : MT2 }}>{count}</span>
+        )}
+      </button>
+    );
+  };
 
   return (
-    <div style={{ padding:"0 16px 16px" }}>
-      {/* Month nav */}
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 0 8px" }}>
-        <button style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:8, padding:"6px 14px", fontSize:16, cursor:"pointer", fontFamily:"inherit" }} onClick={() => setMonthOffset((v) => v - 1)}>‹</button>
-        <button onClick={() => setCalCollapsed(v => !v)}
-          style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1, background:"none", border:"none", cursor:"pointer", fontFamily:"inherit", padding:"4px 12px" }}>
-          <span style={{ fontSize:16, fontWeight:800, color:TX, letterSpacing:"-.3px" }}>{MONTHS[mMon]} {mYear}</span>
-          <span style={{ fontSize:10, color:MT }}>{SEASON_EMOJI[currentSeason]} {seasonYear(currentSeason, mYear)} · {calCollapsed ? "show ▾" : "hide ▴"}</span>
-        </button>
-        <button style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:8, padding:"6px 14px", fontSize:16, cursor:"pointer", fontFamily:"inherit" }} onClick={() => setMonthOffset((v) => v + 1)}>›</button>
-      </div>
-
-      {/* Calendar grid — collapsible */}
-      <div style={{ overflow:"hidden", maxHeight: calCollapsed ? 0 : 540, opacity: calCollapsed ? 0 : 1, transition:"max-height .38s cubic-bezier(.4,0,.2,1), opacity .22s" } as React.CSSProperties}>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3, marginBottom:3 }}>
-          {["Su","Mo","Tu","We","Th","Fr","Sa"].map((d) => <div key={d} style={{ textAlign:"center", fontSize:9, fontWeight:800, color:MT2, letterSpacing:".8px", padding:"4px 0", textTransform:"uppercase" }}>{d}</div>)}
+    <div style={{ padding:"4px 16px 24px" }}>
+      {/* Hero — next season countdown */}
+      <div style={{
+        marginTop:8, marginBottom:16,
+        background:`linear-gradient(135deg, rgba(139,92,246,.18), rgba(99,102,241,.10))`,
+        border:`1px solid rgba(139,92,246,.32)`,
+        borderRadius:18, padding:"18px 18px 16px",
+        position:"relative", overflow:"hidden",
+      }}>
+        <div style={{ position:"absolute", top:-30, right:-20, fontSize:120, opacity:.08, pointerEvents:"none" }}>{SEASON_EMOJI[nextSeason]}</div>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+          <Icon name="upcoming" size={16} color="rgba(167,139,250,1)" strokeWidth={2.2}/>
+          <span style={{ fontSize:10, fontWeight:800, letterSpacing:".8px", textTransform:"uppercase", color:"rgba(167,139,250,1)" }}>Next Season</span>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3, marginBottom:14 }}>
-          {cells.map((date, ci) => {
-            const inMonth = date.getMonth() === mMon;
-            const isToday = inMonth && date.toDateString() === now.toDateString();
-            const dayIdx = (date.getDay() + 6) % 7;
-            const airingCount = inMonth ? getAiringCount(dayIdx) : 0;
-            const favCount    = inMonth ? getFavCount(dayIdx) : 0;
-            const isSeasonPremiere = inMonth && isSeasonStartMonth && date.getDate() === 1 && seasonUpcoming.length > 0;
-            const borderCol = isToday ? OR : isSeasonPremiere ? "rgba(139,92,246,.55)" : airingCount > 0 ? BD2 : "transparent";
-            const bgCol = inMonth ? (isToday ? `rgba(255,107,26,.14)` : isSeasonPremiere ? "rgba(139,92,246,.07)" : BG3) : "transparent";
-            return (
-              <div key={ci}
-                style={{ aspectRatio:"1", borderRadius:7, border:`1.5px solid ${borderCol}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:2, background: bgCol, opacity: inMonth ? 1 : .12 }}
-              >
-                <div style={{ fontSize:11, fontWeight:800, color: isToday ? OR : inMonth ? TX : MT2, lineHeight:1 }}>{date.getDate()}</div>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:1.5, justifyContent:"center", maxWidth:26 }}>
-                  {favCount > 0 && <div style={{ width:4, height:4, borderRadius:"50%", background:OR }}/>}
-                  {airingCount > 0 && <div style={{ width:4, height:4, borderRadius:"50%", background:BD2 }}/>}
-                  {isSeasonPremiere && <div style={{ width:4, height:4, borderRadius:"50%", background:"rgba(139,92,246,.9)" }}/>}
-                </div>
-              </div>
-            );
-          })}
+        <div style={{ fontSize:24, fontWeight:900, color:TX, letterSpacing:"-.5px", lineHeight:1.1 }}>
+          {SEASON_EMOJI[nextSeason]} {seasonYear(nextSeason, nextSeasonYear)}
         </div>
-      </div>
-
-      {/* ── Upcoming this season ── */}
-      {(seasonUpcoming.length > 0 || upcomingLoading) && (
-        <div style={{ marginBottom:16 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
-            <span style={{ fontSize:11, fontWeight:800, letterSpacing:".5px", textTransform:"uppercase", padding:"4px 10px", borderRadius:99, background:"rgba(139,92,246,.12)", color:"rgba(167,139,250,1)", border:"1px solid rgba(139,92,246,.3)", flexShrink:0 }}>
-              {SEASON_EMOJI[currentSeason]} {seasonYear(currentSeason, mYear)} · Upcoming
-            </span>
-            <div style={{ flex:1, height:1, background:BD }}/>
-            {!upcomingLoading && <span style={{ fontSize:10, color:MT2, flexShrink:0 }}>{seasonUpcoming.length} announced</span>}
+        <div style={{ marginTop:8, fontSize:13, color:MT, fontWeight:600 }}>
+          {upcomingLoading ? "Loading announcements…" : nextCountdown ? `Starts ${nextCountdown}` : "Season schedule TBA"}
+        </div>
+        {!upcomingLoading && nextSeasonItems.length > 0 && (
+          <div style={{ marginTop:10, fontSize:11, color:"rgba(167,139,250,.85)", fontWeight:700 }}>
+            {nextSeasonItems.length} show{nextSeasonItems.length === 1 ? "" : "s"} announced
           </div>
-          {(() => {
-            const cd = seasonCountdown(currentSeason, mYear);
-            return cd ? <div style={{ fontSize:11, color:"rgba(167,139,250,.85)", fontWeight:600, marginBottom:10, paddingLeft:2 }}>Season {cd}</div> : null;
-          })()}
-          {upcomingLoading ? (
-            <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4 }}>
-              {[0,1,2].map(i => <div key={i} className="anical-skel" style={{ width:120, height:160, borderRadius:12, flexShrink:0 }}/>)}
-            </div>
-          ) : seasonUpcoming.length === 0 ? null : (
-            <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4, scrollbarWidth:"none" } as React.CSSProperties}>
-              {seasonUpcoming.map((a, i) => {
-                const starred = upcomingStars.includes(a.id);
-                return (
-                  <button
-                    key={a.id}
-                    aria-label={`Open community for ${a.title}`}
-                    onClick={() => onOpenCommunity({ id:a.id, title:a.title, image_url:a.imageUrl ?? null })}
-                    style={{ flexShrink:0, width:118, background: starred ? `rgba(255,107,26,.07)` : BG2, border:`1px solid ${starred ? OR3 : "rgba(139,92,246,.2)"}`, borderRadius:12, overflow:"hidden", cursor:"pointer", animation:`cardIn .35s ${i*40}ms both`, position:"relative", padding:0, fontFamily:"inherit", textAlign:"left" as const, color:TX }}
-                  >
-                    {a.imageUrl
-                      ? <img src={a.imageUrl} alt={a.title} loading="lazy" decoding="async" style={{ width:"100%", height:150, objectFit:"cover", display:"block" }}/>
-                      : <div style={{ width:"100%", height:150, background:BG4, display:"flex", alignItems:"center", justifyContent:"center", fontSize:28 }}>🎬</div>}
-                    <div style={{ position:"absolute", top:6, right:6 }}>
-                      <button
-                        aria-label={starred ? `Remove ${a.title} from upcoming favorites` : `Star ${a.title}`}
-                        onClick={(e) => { e.stopPropagation(); Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); toggleUpcomingStar(a.id); }}
-                        style={{ background:"rgba(0,0,0,.6)", border:"none", color: starred ? OR : "rgba(255,255,255,.85)", fontSize:14, cursor:"pointer", padding:"4px 7px", lineHeight:1, borderRadius:6, fontFamily:"inherit" }}>
-                        {starred ? "★" : "☆"}
-                      </button>
-                    </div>
-                    <div style={{ padding:"7px 8px 9px" }}>
-                      <div style={{ fontSize:11, fontWeight:700, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, minHeight:28 }}>{a.title}</div>
-                      <div style={{ fontSize:9, color:"rgba(167,139,250,.85)", fontWeight:700, marginTop:4 }}>~{MONTHS[SEASON_MONTHS[currentSeason]].slice(0,3)} {mYear}</div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
+        )}
+      </div>
 
+      {/* Filter pills — scrollable */}
+      <div style={{ display:"flex", gap:7, overflowX:"auto", paddingBottom:4, marginBottom:14, scrollbarWidth:"none" } as React.CSSProperties}>
+        <FilterPill id="next"    label="Next season" count={nextSeasonItems.length}/>
+        <FilterPill id="soon"    label="Coming soon" count={soonItems.length}/>
+        <FilterPill id="starred" label="★ Starred"   count={starredItems.length}/>
+        <FilterPill id="all"     label="All"         count={allItems.length}/>
+      </div>
+
+      {/* Content — grid of upcoming cards grouped by season */}
+      {upcomingLoading ? (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:10 }}>
+          {[0,1,2,3].map((i) => <div key={i} className="anical-skel" style={{ aspectRatio:"3/4", borderRadius:14 }}/>)}
+        </div>
+      ) : filteredItems.length === 0 ? (
+        <div style={{ textAlign:"center", padding:"50px 20px", color:MT, display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
+          <div style={{ width:72, height:72, borderRadius:"50%", background:"rgba(139,92,246,.08)", display:"flex", alignItems:"center", justifyContent:"center", marginBottom:4 }}>
+            <Icon name="upcoming" size={36} color="rgba(167,139,250,.6)" strokeWidth={1.8}/>
+          </div>
+          <div style={{ fontSize:15, fontWeight:700, color:TX }}>
+            {filter === "starred" ? "Nothing starred yet" : "No upcoming shows here"}
+          </div>
+          <div style={{ fontSize:12, color:MT2, maxWidth:280, lineHeight:1.55 }}>
+            {filter === "starred" ? "Tap ☆ on any upcoming show to keep it in your shortlist."
+              : filter === "next" ? "Announcements for the next season will appear here as MyAnimeList confirms them."
+              : "Try a different filter or check back soon — MAL refreshes the upcoming list weekly."}
+          </div>
+        </div>
+      ) : (
+        seasonGroups.map(([key, items]) => {
+          const [s, y] = key.split("-");
+          const seasonKey = s as Season;
+          const yearN = Number(y);
+          const cd = seasonCountdown(seasonKey, yearN);
+          return (
+            <div key={key} style={{ marginBottom:24 }}>
+              {/* Season header */}
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+                <span style={{ display:"inline-flex", alignItems:"center", gap:6, fontSize:11, fontWeight:800, letterSpacing:".5px", textTransform:"uppercase", padding:"4px 10px", borderRadius:99, background:"rgba(139,92,246,.12)", color:"rgba(167,139,250,1)", border:"1px solid rgba(139,92,246,.3)" }}>
+                  <span style={{ fontSize:13 }}>{SEASON_EMOJI[seasonKey]}</span>
+                  {seasonYear(seasonKey, yearN)}
+                </span>
+                <div style={{ flex:1, height:1, background:BD }}/>
+                <span style={{ fontSize:10, color:MT2, fontWeight:600 }}>{items.length} show{items.length===1?"":"s"}</span>
+              </div>
+              {cd && (
+                <div style={{ fontSize:11.5, color:"rgba(167,139,250,.85)", fontWeight:600, marginBottom:10, display:"inline-flex", alignItems:"center", gap:4 }}>
+                  <Icon name="clock" size={11} color="rgba(167,139,250,.85)" strokeWidth={2.3}/>
+                  <span>Season {cd}</span>
+                </div>
+              )}
+
+              {/* Grid */}
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:10 }}>
+                {items.map((a, i) => {
+                  const starred = upcomingStars.includes(a.id);
+                  return (
+                    <button
+                      key={a.id}
+                      aria-label={`${a.title} — open community`}
+                      onClick={() => onOpenCommunity({ id:a.id, title:a.title, image_url:a.imageUrl ?? null, genres:a.genres, episodes:a.episodes, synopsis:a.synopsis, studios:a.studios, year:a.year, season:a.season, mal_url:a.mal_url ?? null })}
+                      style={{
+                        position:"relative", overflow:"hidden",
+                        background: starred ? `rgba(255,107,26,.07)` : BG2,
+                        border:`1px solid ${starred ? OR3 : "rgba(139,92,246,.2)"}`,
+                        borderRadius:14, cursor:"pointer", padding:0,
+                        fontFamily:"inherit", color:TX, textAlign:"left" as const,
+                        animation:`cardIn .35s ${Math.min(i*40, 400)}ms both`,
+                        transition:"transform .15s, border-color .2s",
+                      } as React.CSSProperties}
+                    >
+                      {/* Poster */}
+                      <div style={{ position:"relative", width:"100%", aspectRatio:"3/4", background:BG4 }}>
+                        {a.imageUrl
+                          ? <img src={a.imageUrl} alt={a.title} loading="lazy" decoding="async" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}/>
+                          : <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                              <Icon name="upcoming" size={36} color={MT2}/>
+                            </div>}
+                        <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, transparent 50%, rgba(0,0,0,.8))" }}/>
+                        {/* Star button */}
+                        <button
+                          aria-label={starred ? `Unstar ${a.title}` : `Star ${a.title}`}
+                          aria-pressed={starred}
+                          onClick={(e) => { e.stopPropagation(); toggleUpcomingStar(a.id); }}
+                          style={{ position:"absolute", top:8, right:8, width:34, height:34, borderRadius:"50%", background:"rgba(0,0,0,.55)", border:"1px solid rgba(255,255,255,.12)", color: starred ? OR : "rgba(255,255,255,.92)", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", backdropFilter:"blur(8px)", fontFamily:"inherit" } as React.CSSProperties}
+                        >
+                          <Icon name={starred ? "starFilled" : "star"} size={16} color={starred ? OR : "#fff"}/>
+                        </button>
+                        {/* Genre pill (top-left) */}
+                        {a.genres?.[0] && (
+                          <span style={{ position:"absolute", top:8, left:8, fontSize:9, fontWeight:800, padding:"3px 8px", borderRadius:99, background:"rgba(0,0,0,.55)", color:"#fff", backdropFilter:"blur(8px)", letterSpacing:".3px" } as React.CSSProperties}>{a.genres[0]}</span>
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div style={{ padding:"10px 11px 12px" }}>
+                        <div style={{ fontSize:13, fontWeight:800, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, minHeight:34, letterSpacing:"-.1px" }}>{a.title}</div>
+                        <div style={{ display:"flex", alignItems:"center", gap:5, marginTop:5, fontSize:10, color:MT2 }}>
+                          <span style={{ color:"rgba(167,139,250,1)", fontWeight:700 }}>{SEASON_EMOJI[seasonKey]} {capitalize(seasonKey)}</span>
+                          {a.episodes && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span>{a.episodes} ep{a.episodes===1?"":"s"}</span>
+                            </>
+                          )}
+                        </div>
+                        {a.studios?.[0] && (
+                          <div style={{ marginTop:4, fontSize:10, color:MT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{a.studios[0]}</div>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }
@@ -1534,30 +1725,87 @@ function UpcomingCard({ anime, starred, onToggle, onOpen, delay = 0 }: { anime: 
 }
 
 // ── News card ──────────────────────────────────────────────────────────────────
+// Rough estimate of read time from the excerpt
+function estimateReadMin(excerpt?: string): number {
+  if (!excerpt) return 1;
+  const words = excerpt.split(/\s+/).length;
+  // ANN excerpts are often a teaser; bump up a bit so it feels closer to article length
+  const total = Math.max(words * 5, 200);
+  return Math.max(1, Math.round(total / 220));
+}
+
 function NewsCard({ item, delay = 0, onOpen }: { item: NewsItem; delay?: number; onOpen: (n: NewsItem) => void }) {
   const age = formatNewsAge(item.date);
+  const isANN = item.source === "ANN";
+  const readMin = estimateReadMin(item.excerpt);
+  const hasImage = !!item.imageUrl;
   return (
-    <div
+    <article
       className="anical-card"
       onClick={() => onOpen(item)}
-      style={{ display:"flex", gap:10, padding:12, background:BG2, border:`1px solid ${BD}`, borderRadius:14, cursor:"pointer", marginBottom:8, overflow:"hidden", animation:`cardIn .4s ${delay}ms cubic-bezier(.2,.7,.2,1) both`, transition:"transform .15s" }}
+      role="button"
+      aria-label={`Read ${item.title}`}
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(item); } }}
+      style={{
+        display:"flex", flexDirection:"column",
+        background:BG2, border:`1px solid ${BD}`, borderRadius:16,
+        cursor:"pointer", marginBottom:10, overflow:"hidden",
+        animation:`cardIn .4s ${delay}ms cubic-bezier(.2,.7,.2,1) both`,
+        transition:"transform .15s, border-color .2s, box-shadow .2s",
+      } as React.CSSProperties}
     >
-      {item.imageUrl
-        ? <img src={item.imageUrl} alt="" loading="lazy" style={{ width:72, height:72, borderRadius:10, objectFit:"cover", flexShrink:0, background:BG4 }}/>
-        : <div style={{ width:72, height:72, borderRadius:10, background:BG4, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0, color:MT2 }}>📰</div>}
-      <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:5, flexWrap:"wrap" as const }}>
-          <span style={{ fontSize:9, fontWeight:800, padding:"2px 6px", borderRadius:4, background:item.source==="ANN"?OR2:BG3, color:item.source==="ANN"?OR:MT, border:`1px solid ${item.source==="ANN"?OR3:BD}`, textTransform:"uppercase" as const, letterSpacing:".5px" }}>{item.source}</span>
-          {item.animeTitle && <span style={{ fontSize:10, color:OR, fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const, maxWidth:110 }}>{item.animeTitle}</span>}
-          {age && <span style={{ fontSize:10, color:MT2, marginLeft:"auto", flexShrink:0 }}>{age}</span>}
+      {/* Hero image — full width if present */}
+      {hasImage && (
+        <div style={{ position:"relative", width:"100%", height:158, background:BG4, overflow:"hidden" }}>
+          <img src={item.imageUrl} alt={item.title} loading="lazy" decoding="async" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}/>
+          <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, rgba(0,0,0,.05) 0%, rgba(0,0,0,.65) 100%)" }}/>
+          {/* Source pill over image */}
+          <span style={{ position:"absolute", top:10, left:10, fontSize:9, fontWeight:800, padding:"3px 8px", borderRadius:6, background: isANN ? OR : "rgba(0,0,0,.55)", color:"#fff", border:`1px solid ${isANN ? OR : "rgba(255,255,255,.15)"}`, textTransform:"uppercase" as const, letterSpacing:".7px", backdropFilter:"blur(8px)" } as React.CSSProperties}>{item.source}</span>
+          {item.animeTitle && (
+            <span style={{ position:"absolute", top:10, right:10, fontSize:10, fontWeight:700, padding:"3px 8px", borderRadius:99, background:"rgba(255,107,26,.25)", color:"#fff", border:`1px solid rgba(255,107,26,.6)`, backdropFilter:"blur(8px)", maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const } as React.CSSProperties}>{item.animeTitle}</span>
+          )}
         </div>
-        <div style={{ fontSize:13, fontWeight:700, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, marginBottom:5 }}>{item.title}</div>
-        {item.excerpt && <div style={{ fontSize:11, color:MT, lineHeight:1.5, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const }}>{item.excerpt}</div>}
-        <div style={{ marginTop:5, fontSize:10, color:MT2, display:"flex", alignItems:"center", gap:3 }}>
-          <span>Tap to expand</span><span style={{ fontSize:9 }}>›</span>
+      )}
+
+      {/* Body */}
+      <div style={{ display:"flex", gap:12, padding: hasImage ? "12px 14px 14px" : 14 }}>
+        {/* Compact thumb shown when no hero image */}
+        {!hasImage && (
+          <div style={{ width:78, height:78, borderRadius:12, background:BG4, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:MT2 }}>
+            <Icon name="news" size={32} color={MT2}/>
+          </div>
+        )}
+        <div style={{ flex:1, minWidth:0 }}>
+          {/* Meta row when no hero image */}
+          {!hasImage && (
+            <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6, flexWrap:"wrap" as const }}>
+              <span style={{ fontSize:9, fontWeight:800, padding:"2px 7px", borderRadius:4, background:isANN?OR2:BG3, color:isANN?OR:MT, border:`1px solid ${isANN?OR3:BD}`, textTransform:"uppercase" as const, letterSpacing:".5px" }}>{item.source}</span>
+              {item.animeTitle && <span style={{ fontSize:10, color:OR, fontWeight:700, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const, maxWidth:140 }}>{item.animeTitle}</span>}
+            </div>
+          )}
+          {/* Title */}
+          <h3 style={{ fontSize:14.5, fontWeight:800, lineHeight:1.32, color:TX, margin:0, marginBottom:6, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:hasImage?2:2, WebkitBoxOrient:"vertical" as const, letterSpacing:"-.1px" } as React.CSSProperties}>{item.title}</h3>
+          {/* Excerpt — 3 lines for richer preview */}
+          {item.excerpt && (
+            <p style={{ fontSize:12, color:MT, lineHeight:1.6, margin:0, marginBottom:8, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:3, WebkitBoxOrient:"vertical" as const } as React.CSSProperties}>{item.excerpt}</p>
+          )}
+          {/* Footer with read time + age + chevron */}
+          <div style={{ display:"flex", alignItems:"center", gap:6, fontSize:10.5, color:MT2 }}>
+            <div style={{ display:"inline-flex", alignItems:"center", gap:3 }}>
+              <Icon name="clock" size={11} color={MT2} strokeWidth={2.2}/>
+              <span>{readMin} min read</span>
+            </div>
+            {age && <span aria-hidden="true">·</span>}
+            {age && <span>{age}</span>}
+            <span style={{ marginLeft:"auto", display:"inline-flex", alignItems:"center", gap:3, color:OR, fontWeight:700 }}>
+              Read more
+              <Icon name="chevronRight" size={11} color={OR} strokeWidth={2.5}/>
+            </span>
+          </div>
         </div>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -1565,61 +1813,129 @@ function NewsCard({ item, delay = 0, onOpen }: { item: NewsItem; delay?: number;
 function NewsDetailSheet({ item, onClose }: { item: NewsItem; onClose: () => void }) {
   const age = formatNewsAge(item.date);
   const isANN = item.source === "ANN";
+  const readMin = estimateReadMin(item.excerpt);
+  const fullDate = item.date ? (() => { try { return new Date(item.date).toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" }); } catch { return null; } })() : null;
+  // Split excerpt into paragraphs on double-newline or sentence boundaries for nicer reading
+  const paragraphs: string[] = item.excerpt
+    ? item.excerpt.split(/\n\n+|(?<=[\.\?\!])\s+(?=[A-Z"])/)
+        .map((p) => p.trim()).filter((p) => p.length > 0)
+    : [];
+  const handleShareArticle = async () => {
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+    try {
+      if ((navigator as any).share) {
+        await (navigator as any).share({ title: item.title, text: item.title, url: item.url });
+        return;
+      }
+    } catch {}
+    try { await navigator.clipboard.writeText(item.url); } catch {}
+  };
   return (
     <>
       <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.84)", zIndex:200, backdropFilter:"blur(8px)" } as React.CSSProperties} onClick={onClose}/>
-      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"90vh", overflowY:"auto", zIndex:201, animation:"sheetUp .3s cubic-bezier(.2,.7,.2,1)" }}>
-        <div style={{ width:36, height:4, background:BD2, borderRadius:2, margin:"14px auto 0" }}/>
+      <div role="dialog" aria-modal="true" aria-label={item.title}
+        style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"92vh", overflowY:"auto", zIndex:201, animation:"sheetUp .3s cubic-bezier(.2,.7,.2,1)" }}>
+        <div style={{ width:40, height:4, background:BD2, borderRadius:2, margin:"12px auto 0" }}/>
 
-        {/* Hero image */}
+        {/* Hero image — larger */}
         {item.imageUrl ? (
-          <div style={{ position:"relative", margin:"14px 0 0", height:200, overflow:"hidden" }}>
-            <img src={item.imageUrl} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}/>
-            <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, transparent 45%, rgba(17,17,25,.95))" }}/>
-            {/* Source badge over image */}
-            <div style={{ position:"absolute", top:12, left:16 }}>
-              <span style={{ fontSize:9, fontWeight:800, padding:"3px 8px", borderRadius:4, background: isANN ? OR : BG4, color: isANN ? "#fff" : MT, border:`1px solid ${isANN ? OR : BD}`, textTransform:"uppercase" as const, letterSpacing:".8px", backdropFilter:"blur(8px)" }}>{item.source}</span>
+          <div style={{ position:"relative", margin:"12px 0 0", height:240, overflow:"hidden" }}>
+            <img src={item.imageUrl} alt={item.title} loading="eager" decoding="async" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}/>
+            <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, transparent 35%, rgba(17,17,25,.96))" }}/>
+            {/* Close button over image */}
+            <button
+              aria-label="Close"
+              onClick={onClose}
+              style={{ position:"absolute", top:10, right:12, width:36, height:36, borderRadius:"50%", background:"rgba(0,0,0,.55)", border:"1px solid rgba(255,255,255,.18)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", backdropFilter:"blur(8px)" } as React.CSSProperties}
+            >
+              <Icon name="close" size={18} color="#fff"/>
+            </button>
+            {/* Source + pills row */}
+            <div style={{ position:"absolute", top:10, left:14, display:"flex", gap:6, flexWrap:"wrap" as const }}>
+              <span style={{ fontSize:9, fontWeight:800, padding:"4px 9px", borderRadius:6, background: isANN ? OR : "rgba(0,0,0,.55)", color:"#fff", border:`1px solid ${isANN ? OR : "rgba(255,255,255,.15)"}`, textTransform:"uppercase" as const, letterSpacing:".8px", backdropFilter:"blur(8px)" } as React.CSSProperties}>{item.source}</span>
+              {item.animeTitle && (
+                <span style={{ fontSize:10, fontWeight:700, padding:"4px 9px", borderRadius:99, background:"rgba(255,107,26,.25)", color:"#fff", border:`1px solid rgba(255,107,26,.6)`, backdropFilter:"blur(8px)", maxWidth:180, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const } as React.CSSProperties}>{item.animeTitle}</span>
+              )}
             </div>
           </div>
         ) : (
-          <div style={{ height:8 }}/>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"flex-end", padding:"6px 12px 0" }}>
+            <button aria-label="Close" onClick={onClose} style={{ width:32, height:32, borderRadius:"50%", background:BG3, border:`1px solid ${BD}`, color:MT, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" }}>
+              <Icon name="close" size={16} color={MT}/>
+            </button>
+          </div>
         )}
 
-        <div style={{ padding: item.imageUrl ? "0 20px 48px" : "16px 20px 48px" }}>
-          {/* Meta row */}
-          <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" as const, marginBottom:12, marginTop: item.imageUrl ? -4 : 0 }}>
-            {!item.imageUrl && <span style={{ fontSize:9, fontWeight:800, padding:"3px 8px", borderRadius:4, background:isANN?OR2:BG3, color:isANN?OR:MT, border:`1px solid ${isANN?OR3:BD}`, textTransform:"uppercase" as const, letterSpacing:".6px" }}>{item.source}</span>}
-            {item.animeTitle && (
-              <span style={{ fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:99, background:OR2, color:OR, border:`1px solid ${OR3}` }}>{item.animeTitle}</span>
-            )}
-            {age && <span style={{ fontSize:10, color:MT2, marginLeft:"auto" }}>{age}</span>}
-          </div>
-
-          {/* Title */}
-          <div style={{ fontSize:20, fontWeight:800, lineHeight:1.3, color:TX, marginBottom:16 }}>{item.title}</div>
-
-          {/* Divider */}
-          <div style={{ height:1, background:BD, marginBottom:16 }}/>
-
-          {/* Full excerpt */}
-          {item.excerpt ? (
-            <div style={{ fontSize:14, lineHeight:1.8, color:"rgba(242,242,250,.8)", marginBottom:28, whiteSpace:"pre-wrap" as const }}>{item.excerpt}</div>
-          ) : (
-            <div style={{ fontSize:13, color:MT2, marginBottom:28, fontStyle:"italic" as const }}>No preview available — open the full article to read.</div>
+        <div style={{ padding: item.imageUrl ? "0 22px 48px" : "0 22px 48px" }}>
+          {/* Meta row (only when no hero) */}
+          {!item.imageUrl && (
+            <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" as const, marginBottom:12 }}>
+              <span style={{ fontSize:9, fontWeight:800, padding:"3px 8px", borderRadius:4, background:isANN?OR2:BG3, color:isANN?OR:MT, border:`1px solid ${isANN?OR3:BD}`, textTransform:"uppercase" as const, letterSpacing:".6px" }}>{item.source}</span>
+              {item.animeTitle && (
+                <span style={{ fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:99, background:OR2, color:OR, border:`1px solid ${OR3}` }}>{item.animeTitle}</span>
+              )}
+            </div>
           )}
 
-          {/* CTA button */}
-          <button
-            onClick={() => openUrl(item.url)}
-            style={{ width:"100%", padding:"14px 20px", borderRadius:12, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:15, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:`0 8px 24px -6px rgba(255,107,26,.5)` } as React.CSSProperties}
-          >
-            <span>Read Full Article</span>
-            <span style={{ fontSize:16 }}>↗</span>
-          </button>
+          {/* Title — bigger, tighter */}
+          <h2 style={{ fontSize:23, fontWeight:900, lineHeight:1.22, color:TX, margin:0, marginTop:item.imageUrl ? 4 : 0, marginBottom:12, letterSpacing:"-.4px" }}>{item.title}</h2>
+
+          {/* Byline row */}
+          <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" as const, marginBottom:18, fontSize:11.5, color:MT }}>
+            <div style={{ display:"inline-flex", alignItems:"center", gap:4 }}>
+              <Icon name="news" size={13} color={MT} strokeWidth={2}/>
+              <span style={{ fontWeight:600 }}>{isANN ? "Anime News Network" : "MyAnimeList"}</span>
+            </div>
+            {fullDate && <><span aria-hidden="true">·</span><span>{fullDate}</span></>}
+            {age && <><span aria-hidden="true">·</span><span>{age}</span></>}
+            <div style={{ marginLeft:"auto", display:"inline-flex", alignItems:"center", gap:4, color:OR, fontWeight:700 }}>
+              <Icon name="clock" size={12} color={OR} strokeWidth={2.4}/>
+              <span>{readMin} min read</span>
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div style={{ height:1, background:BD, marginBottom:18 }}/>
+
+          {/* Body — proper paragraph breaks */}
+          {paragraphs.length > 0 ? (
+            <div style={{ marginBottom:24 }}>
+              {paragraphs.map((p, i) => (
+                <p key={i} style={{ fontSize:15, lineHeight:1.78, color:TX, opacity:.92, margin:0, marginBottom: i === paragraphs.length - 1 ? 0 : 14, letterSpacing:".05px" } as React.CSSProperties}>{p}</p>
+              ))}
+              {/* Read-more nudge */}
+              <div style={{ marginTop:14, padding:"10px 14px", background:BG3, border:`1px dashed ${BD2}`, borderRadius:10, fontSize:12, color:MT, textAlign:"center" as const, fontStyle:"italic" as const }}>
+                Preview shown — open the full article for the complete story.
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize:13, color:MT2, marginBottom:24, fontStyle:"italic" as const, padding:"16px 14px", background:BG3, borderRadius:10, textAlign:"center" as const }}>
+              No preview available for this article. Tap below to read the full story on {isANN ? "ANN" : "MAL"}.
+            </div>
+          )}
+
+          {/* Actions: Read full + Share */}
+          <div style={{ display:"flex", gap:8 }}>
+            <button
+              aria-label="Read the full article"
+              onClick={() => { Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {}); openUrl(item.url); }}
+              style={{ flex:1, padding:"14px 18px", borderRadius:14, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:14.5, fontWeight:800, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:`0 8px 24px -6px rgba(255,107,26,.5)` } as React.CSSProperties}
+            >
+              <span>Read Full Article</span>
+              <Icon name="external" size={16} color="#fff"/>
+            </button>
+            <button
+              aria-label="Share article"
+              onClick={handleShareArticle}
+              style={{ flexShrink:0, width:50, borderRadius:14, border:`1px solid ${BD}`, background:BG3, color:MT, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontFamily:"inherit" } as React.CSSProperties}
+            >
+              <Icon name="share" size={18} color={MT}/>
+            </button>
+          </div>
 
           {/* Source label */}
-          <div style={{ textAlign:"center", fontSize:10, color:MT2, marginTop:10 }}>
-            via {item.source === "ANN" ? "Anime News Network" : "MyAnimeList"}
+          <div style={{ textAlign:"center", fontSize:10.5, color:MT2, marginTop:12, letterSpacing:".3px" }}>
+            via {isANN ? "Anime News Network" : "MyAnimeList"}
           </div>
         </div>
       </div>
@@ -1628,14 +1944,17 @@ function NewsDetailSheet({ item, onClose }: { item: NewsItem; onClose: () => voi
 }
 
 // ── News skeleton ──────────────────────────────────────────────────────────────
-function NewsSkeleton() {
+function NewsSkeleton({ withHero = true }: { withHero?: boolean }) {
   return (
-    <div style={{ display:"flex", gap:10, padding:12, background:BG2, border:`1px solid ${BD}`, borderRadius:14, marginBottom:8 }}>
-      <div className="anical-skel" style={{ width:72, height:72, borderRadius:10, flexShrink:0 }}/>
-      <div style={{ flex:1, display:"flex", flexDirection:"column", gap:7, justifyContent:"center" }}>
-        <div className="anical-skel" style={{ height:11, borderRadius:4, width:"20%" }}/>
-        <div className="anical-skel" style={{ height:13, borderRadius:4, width:"88%" }}/>
-        <div className="anical-skel" style={{ height:11, borderRadius:4, width:"65%" }}/>
+    <div style={{ background:BG2, border:`1px solid ${BD}`, borderRadius:16, marginBottom:10, overflow:"hidden" }}>
+      {withHero && <div className="anical-skel" style={{ width:"100%", height:158 }}/>}
+      <div style={{ padding:"12px 14px 14px", display:"flex", flexDirection:"column", gap:8 }}>
+        <div className="anical-skel" style={{ height:14, borderRadius:5, width:"92%" }}/>
+        <div className="anical-skel" style={{ height:14, borderRadius:5, width:"70%" }}/>
+        <div style={{ height:4 }}/>
+        <div className="anical-skel" style={{ height:10, borderRadius:4, width:"100%" }}/>
+        <div className="anical-skel" style={{ height:10, borderRadius:4, width:"100%" }}/>
+        <div className="anical-skel" style={{ height:10, borderRadius:4, width:"55%" }}/>
       </div>
     </div>
   );
@@ -1674,19 +1993,17 @@ function CommunityView({ favAnime, allAnime, onOpenCommunity }: { favAnime: Anim
 
       {/* Search */}
       <div style={{ position:"relative", marginBottom:16 }}>
-        <div style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", pointerEvents:"none", color:MT2, fontSize:13 }}>
-          <svg width={14} height={14} viewBox="0 0 20 20" fill="none" style={{ opacity:.5 }}>
-            <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="1.8"/>
-            <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-          </svg>
+        <div style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", pointerEvents:"none", color:MT2, display:"flex" }}>
+          <Icon name="search" size={14} color={MT2} strokeWidth={2}/>
         </div>
         <input
-          style={{ width:"100%", background:"rgba(255,255,255,0.06)", border:`1px solid ${search ? "rgba(255,107,26,.35)" : "rgba(255,255,255,0.09)"}`, borderRadius:12, padding:"10px 12px 10px 34px", color:TX, fontSize:14, fontFamily:"inherit", outline:"none", boxSizing:"border-box" } as React.CSSProperties}
+          aria-label="Search anime communities"
+          style={{ width:"100%", background:"rgba(255,255,255,0.06)", border:`1px solid ${search ? "rgba(255,107,26,.35)" : "rgba(255,255,255,0.09)"}`, borderRadius:12, padding:"10px 36px 10px 34px", color:TX, fontSize:14, fontFamily:"inherit", outline:"none", boxSizing:"border-box" } as React.CSSProperties}
           placeholder="Search anime communities…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        {search && <button onClick={() => setSearch("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"rgba(255,255,255,.12)", border:"none", color:MT, width:20, height:20, borderRadius:"50%", cursor:"pointer", fontSize:10, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"inherit" }}>✕</button>}
+        {search && <button aria-label="Clear search" onClick={() => setSearch("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"rgba(255,255,255,.12)", border:"none", color:MT, width:24, height:24, borderRadius:"50%", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"inherit" }}><Icon name="close" size={11} color={MT} strokeWidth={2.4}/></button>}
       </div>
 
       {/* Your Shows (fav anime) */}
@@ -1838,9 +2155,10 @@ function NewsView({ favAnime, noSpoiler }: { favAnime: any[]; noSpoiler: boolean
       .finally(() => setFavLoading(false));
   }, [favAnime]);
 
-  const SectionHeader = ({ emoji, title, count, accent }: { emoji: string; title: string; count?: number; accent?: boolean }) => (
+  const SectionHeader = ({ icon, title, count, accent }: { icon: IconName; title: string; count?: number; accent?: boolean }) => (
     <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12, fontSize:12, fontWeight:700, color: accent ? OR : MT, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
-      <span style={{ fontSize:14 }}>{emoji}</span><span>{title}</span>
+      <Icon name={icon} size={15} color={accent ? OR : MT} strokeWidth={2.2}/>
+      <span>{title}</span>
       {count !== undefined && <span style={{ fontSize:10, padding:"2px 7px", borderRadius:99, background: accent ? OR2 : BG3, border:`1px solid ${accent ? OR3 : BD}`, color: accent ? OR : MT }}>{count}</span>}
       <div style={{ flex:1, height:1, background:BD }}/>
     </div>
@@ -1853,13 +2171,16 @@ function NewsView({ favAnime, noSpoiler }: { favAnime: any[]; noSpoiler: boolean
           <div style={{ fontSize:22, fontWeight:900, letterSpacing:"-.5px" }}>News</div>
           <div style={{ fontSize:12, color:MT, marginTop:2 }}>Industry news & updates for your shows</div>
         </div>
-        <button onClick={loadAnn} style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:10, padding:"7px 12px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>↻</button>
+        <button aria-label="Refresh news" onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); loadAnn(); }}
+          style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:10, padding:"8px 12px", cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <Icon name="refresh" size={16} color={MT}/>
+        </button>
       </div>
 
       {/* ── Your Shows News ── */}
       {favAnime.length > 0 && (
         <div style={{ marginBottom:28 }}>
-          <SectionHeader emoji="⭐" title="Your Shows" count={favNews.length} accent/>
+          <SectionHeader icon="starFilled" title="Your Shows" count={favNews.length} accent/>
           {favLoading ? [0,1,2].map((i) => <NewsSkeleton key={i}/>) :
            favNews.length === 0 ? <div style={{ textAlign:"center", padding:"20px 0", color:MT, fontSize:13 }}>No recent news for your shows.</div> :
            favNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 25} onOpen={setDetailNews}/>)}
@@ -1868,7 +2189,7 @@ function NewsView({ favAnime, noSpoiler }: { favAnime: any[]; noSpoiler: boolean
 
       {/* ── Industry News ── */}
       <div>
-        <SectionHeader emoji="📡" title="Industry News" count={!annLoading ? annNews.length : undefined}/>
+        <SectionHeader icon="trending" title="Industry News" count={!annLoading ? annNews.length : undefined}/>
         {annLoading ? [0,1,2,3].map((i) => <NewsSkeleton key={i}/>) :
          annError ? (
            <div style={{ textAlign:"center", padding:"32px 0", color:MT, display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
@@ -1890,7 +2211,7 @@ function NewsView({ favAnime, noSpoiler }: { favAnime: any[]; noSpoiler: boolean
         const blocked = noSpoiler && !rumorRevealed;
         return (
           <div style={{ marginTop:24 }}>
-            <SectionHeader emoji="🕵️" title="Rumors & Leaks" count={!annLoading ? rumors.length : undefined}/>
+            <SectionHeader icon="spoiler" title="Rumors & Leaks" count={!annLoading ? rumors.length : undefined}/>
             {blocked ? (
               <div style={{ borderRadius:14, border:`1px solid rgba(139,92,246,.35)`, background:"rgba(139,92,246,.07)", padding:"20px 16px", textAlign:"center" }}>
                 <div style={{ fontSize:26, marginBottom:8 }}>🙈</div>
@@ -1984,7 +2305,7 @@ function FavCard({ anime, delay, tz, notifEnabled, perAnimeNotif, toggleAnimeNot
 }
 
 // ── My List view ───────────────────────────────────────────────────────────────
-function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, topGenre, notifSettings, setNotifSettings, notifPerm, requestNotifPerm, testNotif, onOpen, toggleFav, installPwa, downloadExtension, tick }: any) {
+function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, topGenre, notifSettings, setNotifSettings, notifPerm, requestNotifPerm, testNotif, onOpen, toggleFav, installPwa, downloadExtension, tick, hideCommunity, setHideCommunity, noSpoiler, setNoSpoiler, dark, setDark, onShowOnboarding }: any) {
   const now = new Date();
   const withNext = favAnime.map((a: any) => ({ ...a, __next: nextJstAiringDate(a.broadcast_day, a.broadcast_time) }))
     .sort((a: any, b: any) => {
@@ -2115,42 +2436,193 @@ function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, 
         ))
       )}
 
+      {/* ── Settings ── */}
+      <div style={{ marginTop:30 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14, fontSize:12, fontWeight:700, color:MT, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
+          <Icon name="settings" size={14} color={MT} strokeWidth={2}/>
+          <span>Settings</span>
+          <div style={{ flex:1, height:1, background:BD }}/>
+        </div>
+
+        <div style={{ background:BG2, border:`1px solid ${BD}`, borderRadius:14, overflow:"hidden" }}>
+          {/* Dark mode */}
+          <SettingRow
+            icon={dark ? "moon" : "sun"}
+            label="Theme"
+            description={dark ? "Dark mode" : "Light mode"}
+            checked={!dark}
+            onToggle={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setDark((v: boolean) => !v); }}
+            toggleLabel={dark ? "Switch to light" : "Switch to dark"}
+          />
+
+          {/* No-spoiler */}
+          <SettingRow
+            icon={noSpoiler ? "spoiler" : "eye"}
+            label="No-spoiler mode"
+            description={noSpoiler ? "Trailers + rumors hidden" : "Trailers + rumors visible"}
+            checked={noSpoiler}
+            onToggle={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setNoSpoiler((v: boolean) => !v); }}
+            toggleLabel="Toggle no-spoiler"
+          />
+
+          {/* Hide Community */}
+          <SettingRow
+            icon="community"
+            label="Community tab"
+            description={hideCommunity ? "Hidden from bottom nav" : "Visible in bottom nav"}
+            checked={!hideCommunity}
+            onToggle={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setHideCommunity((v: boolean) => !v); }}
+            toggleLabel="Toggle community visibility"
+            last
+          />
+        </div>
+
+        {/* Onboarding replay + version */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:14, padding:"4px 4px 0" }}>
+          <button
+            onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); onShowOnboarding(); }}
+            style={{ background:"none", border:"none", color:MT2, fontSize:12, cursor:"pointer", fontFamily:"inherit", padding:6, display:"inline-flex", alignItems:"center", gap:5 }}
+          >
+            <Icon name="play" size={11} color={MT2}/>
+            <span>Replay intro</span>
+          </button>
+          <span style={{ fontSize:10, color:MT2 }}>AniCal · made with ♥</span>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+// Reusable settings row with an iOS-style toggle. Keeps the look consistent across the panel.
+function SettingRow({ icon, label, description, checked, onToggle, toggleLabel, last }: { icon: IconName; label: string; description: string; checked: boolean; onToggle: () => void; toggleLabel: string; last?: boolean }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px", borderBottom: last ? "none" : `1px solid ${BD}` }}>
+      <div style={{ width:36, height:36, borderRadius:10, background:BG3, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color: checked ? OR : MT }}>
+        <Icon name={icon} size={18} color={checked ? OR : MT}/>
+      </div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontSize:13.5, fontWeight:700, color:TX, letterSpacing:"-.05px" }}>{label}</div>
+        <div style={{ fontSize:11, color:MT, marginTop:2 }}>{description}</div>
+      </div>
+      <button
+        role="switch"
+        aria-checked={checked}
+        aria-label={toggleLabel}
+        onClick={onToggle}
+        style={{
+          flexShrink:0, position:"relative",
+          width:44, height:26, borderRadius:99,
+          border:"none", padding:0, cursor:"pointer", fontFamily:"inherit",
+          background: checked ? `linear-gradient(135deg, ${OR}, #cc5610)` : BG4,
+          transition:"background .22s",
+          boxShadow: checked ? `0 0 12px rgba(255,107,26,.3)` : "none",
+        } as React.CSSProperties}
+      >
+        <div style={{
+          position:"absolute", top:2, left: checked ? 20 : 2,
+          width:22, height:22, borderRadius:"50%",
+          background:"#fff", transition:"left .22s cubic-bezier(.2,.7,.2,1)",
+          boxShadow:"0 2px 4px rgba(0,0,0,.25)",
+        } as React.CSSProperties}/>
+      </button>
     </div>
   );
 }
 
 // ── Bottom nav ─────────────────────────────────────────────────────────────────
-function BottomNav({ view, setView, favCount }: { view: string; setView: (v: "schedule"|"month"|"community"|"news"|"stats") => void; favCount: number }) {
-  const tabs: { id: "schedule"|"month"|"community"|"news"|"stats"; emoji: string; label: string }[] = [
-    { id:"schedule",  emoji:"📋", label:"Schedule"  },
-    { id:"month",     emoji:"✨", label:"Upcoming"  },
-    { id:"community", emoji:"💬", label:"Community" },
-    { id:"news",      emoji:"📰", label:"News"      },
-    { id:"stats",     emoji:"⭐", label:"My List"   },
+// Scrollable, interactive, icon-driven. Each tab uses SVG icons that fill in
+// when active. Animated underline glides between tabs. The Community tab is
+// hidden when the user opts out in settings.
+type NavId = "schedule"|"month"|"community"|"news"|"stats";
+
+function BottomNav({ view, setView, favCount, hideCommunity }: { view: string; setView: (v: NavId) => void; favCount: number; hideCommunity: boolean }) {
+  type Tab = { id: NavId; icon: IconName; activeIcon?: IconName; label: string; accent?: string };
+  const allTabs: Tab[] = [
+    { id:"schedule",  icon:"calendar",  label:"Schedule"  },
+    { id:"month",     icon:"upcoming",  label:"Upcoming"  },
+    { id:"community", icon:"community", label:"Community" },
+    { id:"news",      icon:"news",      label:"News"      },
+    { id:"stats",     icon:"star", activeIcon:"starFilled", label:"My List", accent: OR },
   ];
+  const tabs: Tab[] = allTabs.filter((t) => !(t.id === "community" && hideCommunity));
+
   return (
-    <nav className="anical-bottom-nav" style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, zIndex:100, background:"var(--c-nav)", backdropFilter:"blur(24px) saturate(1.4)", borderTop:`1px solid ${BD}`, display:"flex" } as React.CSSProperties}>
+    <nav
+      className="anical-bottom-nav"
+      aria-label="Primary navigation"
+      style={{
+        position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)",
+        width:"100%", maxWidth:480, zIndex:100,
+        background:"var(--c-nav)", backdropFilter:"blur(28px) saturate(1.5)",
+        borderTop:`1px solid ${BD}`,
+        display:"flex", overflowX:"auto", scrollbarWidth:"none",
+        WebkitOverflowScrolling:"touch",
+      } as React.CSSProperties}
+    >
       {tabs.map((tab) => {
         const active = view === tab.id;
+        const iconName = active && tab.activeIcon ? tab.activeIcon : tab.icon;
+        const color = active ? OR : MT2;
         return (
           <button
             key={tab.id}
             className="anical-navbtn"
-            onClick={() => setView(tab.id)}
-            style={{ flex:1, background:"none", border:"none", cursor:"pointer", fontFamily:"inherit", display:"flex", flexDirection:"column", alignItems:"center", gap:3, padding:"10px 0 12px", position:"relative" }}
+            aria-label={`Open ${tab.label}`}
+            aria-current={active ? "page" : undefined}
+            onClick={() => { if (!active) Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setView(tab.id); }}
+            style={{
+              flex:"1 0 auto", minWidth:72,
+              background:"none", border:"none", cursor:"pointer", fontFamily:"inherit",
+              display:"flex", flexDirection:"column", alignItems:"center", gap:4,
+              padding:"10px 6px 12px", position:"relative",
+              transition:"transform .15s",
+            } as React.CSSProperties}
           >
-            {active && <div style={{ position:"absolute", top:0, left:"50%", transform:"translateX(-50%)", width:28, height:3, background:OR, borderRadius:"0 0 3px 3px" }}/>}
-            <span style={{ fontSize:22, filter: active ? "none" : "grayscale(1) brightness(0.45)", transition:"filter .2s", display:"block", lineHeight:1 }}>{tab.emoji}</span>
-            <span style={{ fontSize:10, fontWeight:700, letterSpacing:".5px", textTransform:"uppercase", color: active ? OR : MT2, transition:"color .2s" }}>{tab.label}</span>
-            {tab.id === "stats" && favCount > 0 && (
-              <span style={{ position:"absolute", top:6, left:"calc(50% + 6px)", background:OR, color:"#fff", fontSize:8, fontWeight:800, padding:"1px 5px", borderRadius:99, lineHeight:1.5, animation:`popIn .3s cubic-bezier(.2,.7,.2,1) both` }}>{favCount}</span>
-            )}
+            {/* Top accent bar */}
+            <div style={{
+              position:"absolute", top:0, left:"50%",
+              transform:`translateX(-50%) scaleX(${active ? 1 : 0})`,
+              width:32, height:3, background:OR, borderRadius:"0 0 3px 3px",
+              transformOrigin:"center", transition:"transform .25s cubic-bezier(.2,.7,.2,1)",
+            } as React.CSSProperties}/>
+
+            {/* Active glow pill behind icon */}
+            <div style={{
+              position:"relative",
+              width:38, height:38, borderRadius:12,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              background: active ? "rgba(255,107,26,.12)" : "transparent",
+              border: active ? `1px solid ${OR3}` : "1px solid transparent",
+              transition:"all .22s cubic-bezier(.2,.7,.2,1)",
+              transform: active ? "scale(1)" : "scale(.95)",
+            }}>
+              <Icon name={iconName} size={20} color={color} strokeWidth={active ? 2.2 : 1.9}/>
+              {/* Badge */}
+              {tab.id === "stats" && favCount > 0 && (
+                <span style={{
+                  position:"absolute", top:-3, right:-4,
+                  background:OR, color:"#fff",
+                  fontSize:9, fontWeight:800, padding:"1px 5px",
+                  borderRadius:99, lineHeight:1.4,
+                  animation: `popIn .3s cubic-bezier(.2,.7,.2,1) both`,
+                  border:`2px solid ${BG}`,
+                } as React.CSSProperties}>{favCount}</span>
+              )}
+            </div>
+
+            <span style={{
+              fontSize:10, fontWeight:700, letterSpacing:".5px", textTransform:"uppercase",
+              color: active ? OR : MT2, transition:"color .2s",
+              whiteSpace:"nowrap",
+            } as React.CSSProperties}>{tab.label}</span>
           </button>
         );
       })}
     </nav>
   );
 }
+
 
 // ── Onboarding (first launch only) ─────────────────────────────────────────────
 const ONBOARDING_STEPS = [
@@ -2276,7 +2748,6 @@ export default function AniCal() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<"schedule"|"month"|"community"|"news"|"stats">("schedule");
   const [selectedDay, setSelectedDay] = useState(todayDayIdx);
-  const [monthOffset, setMonthOffset] = useState(0);
   const [favs, setFavs] = useState<number[]>([]);
   const [favFilter, setFavFilter] = useState(false);
   const [search, setSearch] = useState("");
@@ -2290,6 +2761,7 @@ export default function AniCal() {
     return d;
   });
   const [noSpoiler, setNoSpoiler] = useState<boolean>(() => LS.get<boolean>("anical_no_spoiler", false));
+  const [hideCommunity, setHideCommunity] = useState<boolean>(() => LS.get<boolean>("anical_hide_community", false));
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => !LS.get<boolean>("anical_onboarded_v1", false));
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
@@ -2330,6 +2802,11 @@ export default function AniCal() {
     LS.set("anical_dark", dark);
   }, [dark]);
   useEffect(() => { LS.set("anical_no_spoiler", noSpoiler); }, [noSpoiler]);
+  useEffect(() => {
+    LS.set("anical_hide_community", hideCommunity);
+    // If the user hides Community while they're on that tab, send them to Schedule
+    if (hideCommunity && view === "community") setView("schedule");
+  }, [hideCommunity, view]);
 
   // ── Init ──
   useEffect(() => { notif.getPermission().then((p) => setNotifPerm(p as any)); }, []);
@@ -2607,9 +3084,9 @@ export default function AniCal() {
                     aria-label={favFilter ? "Showing favorites only — tap to show all" : "Show only favorites"}
                     aria-pressed={favFilter}
                     onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setFavFilter((v) => !v); }}
-                    style={{ display:"flex", alignItems:"center", gap:5, padding:"9px 14px", minHeight:38, borderRadius:20, border:`1px solid ${favFilter ? OR : BD}`, background: favFilter ? `linear-gradient(135deg, ${OR2}, rgba(255,107,26,0.12))` : BG3, color: favFilter ? OR : MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", transition:"all .18s", boxShadow: favFilter ? `0 0 12px rgba(255,107,26,.25)` : "none", letterSpacing:".3px" } as React.CSSProperties}
+                    style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"9px 14px", minHeight:38, borderRadius:99, border:`1px solid ${favFilter ? OR : BD}`, background: favFilter ? `linear-gradient(135deg, ${OR2}, rgba(255,107,26,0.12))` : BG3, color: favFilter ? OR : MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", transition:"all .18s", boxShadow: favFilter ? `0 0 12px rgba(255,107,26,.25)` : "none", letterSpacing:".3px" } as React.CSSProperties}
                   >
-                    <span style={{ fontSize:13 }}>{favFilter ? "★" : "☆"}</span>
+                    <Icon name={favFilter ? "starFilled" : "star"} size={14} color={favFilter ? OR : MT}/>
                     <span>Favs</span>
                   </button>
                 )}
@@ -2619,29 +3096,31 @@ export default function AniCal() {
                   aria-pressed={noSpoiler}
                   onClick={() => { setNoSpoiler((v) => !v); Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); }}
                   title={noSpoiler ? "No-spoiler on — trailers hidden" : "No-spoiler off — trailers shown"}
-                  style={{ width:38, height:38, borderRadius:"50%", border:`1px solid ${noSpoiler ? "rgba(139,92,246,.5)" : BD}`, background: noSpoiler ? "rgba(139,92,246,.14)" : BG3, color: noSpoiler ? "rgba(167,139,250,1)" : MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s", flexShrink:0 } as React.CSSProperties}
-                >{noSpoiler ? "🙈" : "👁"}</button>
+                  style={{ width:38, height:38, borderRadius:"50%", border:`1px solid ${noSpoiler ? "rgba(139,92,246,.5)" : BD}`, background: noSpoiler ? "rgba(139,92,246,.14)" : BG3, color: noSpoiler ? "rgba(167,139,250,1)" : MT, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s", flexShrink:0 } as React.CSSProperties}
+                >
+                  <Icon name={noSpoiler ? "eyeOff" : "eye"} size={17} color={noSpoiler ? "rgba(167,139,250,1)" : MT}/>
+                </button>
                 {/* Dark / light toggle — always visible */}
                 <button
                   aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
                   aria-pressed={!dark}
                   onClick={() => { setDark((v) => !v); Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); }}
                   title={dark ? "Switch to light mode" : "Switch to dark mode"}
-                  style={{ width:38, height:38, borderRadius:"50%", border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s", flexShrink:0 } as React.CSSProperties}
-                >{dark ? "☀️" : "🌙"}</button>
+                  style={{ width:38, height:38, borderRadius:"50%", border:`1px solid ${BD}`, background:BG3, color:MT, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s", flexShrink:0 } as React.CSSProperties}
+                >
+                  <Icon name={dark ? "sun" : "moon"} size={17} color={MT}/>
+                </button>
               </div>
             </div>
 
             {/* Search bar — only on schedule */}
             {view === "schedule" && (
             <div style={{ padding:"0 16px 10px", position:"relative" } as React.CSSProperties}>
-              <div style={{ position:"absolute", left:28, top:"50%", transform:"translateY(-50%)", pointerEvents:"none", color:MT2, fontSize:14, display:"flex" }}>
-                <svg width={15} height={15} viewBox="0 0 20 20" fill="none" style={{ opacity:.5 }}>
-                  <circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" strokeWidth="1.8"/>
-                  <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
-                </svg>
+              <div style={{ position:"absolute", left:28, top:"50%", transform:"translateY(-50%)", pointerEvents:"none", color:MT2, display:"flex" }}>
+                <Icon name="search" size={15} color={MT2} strokeWidth={2}/>
               </div>
               <input
+                aria-label="Search anime"
                 style={{ width:"100%", background:"rgba(255,255,255,0.06)", border:`1px solid ${search ? "rgba(255,107,26,0.35)" : "rgba(255,255,255,0.09)"}`, borderRadius:14, padding:"10px 36px 10px 36px", color:TX, fontSize:14, fontFamily:"inherit", outline:"none", boxSizing:"border-box", transition:"border-color .2s", letterSpacing:".1px" } as React.CSSProperties}
                 placeholder="Search anime…"
                 value={search}
@@ -2649,9 +3128,10 @@ export default function AniCal() {
               />
               {search && (
                 <button
+                  aria-label="Clear search"
                   onClick={() => setSearch("")}
-                  style={{ position:"absolute", right:28, top:"50%", transform:"translateY(-50%)", background:"rgba(255,255,255,0.12)", border:"none", color:MT, width:20, height:20, borderRadius:"50%", cursor:"pointer", fontSize:10, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"inherit" } as React.CSSProperties}
-                >✕</button>
+                  style={{ position:"absolute", right:28, top:"50%", transform:"translateY(-50%)", background:"rgba(255,255,255,0.12)", border:"none", color:MT, width:24, height:24, borderRadius:"50%", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"inherit" } as React.CSSProperties}
+                ><Icon name="close" size={11} color={MT} strokeWidth={2.4}/></button>
               )}
             </div>
             )}
@@ -2700,8 +3180,6 @@ export default function AniCal() {
             )}
             {view === "month" && (
               <MonthView
-                monthOffset={monthOffset}
-                setMonthOffset={setMonthOffset}
                 schedule={schedule}
                 favs={favs}
                 onOpenCommunity={(a) => { setCommunityAnime(a); }}
@@ -2721,12 +3199,16 @@ export default function AniCal() {
                 notifPerm={notifPerm} requestNotifPerm={requestNotifPerm} testNotif={testNotif}
                 onOpen={setDetailAnime} toggleFav={toggleFav}
                 installPwa={installPwa} downloadExtension={downloadExtension} tick={tick}
+                hideCommunity={hideCommunity} setHideCommunity={setHideCommunity}
+                noSpoiler={noSpoiler} setNoSpoiler={setNoSpoiler}
+                dark={dark} setDark={setDark}
+                onShowOnboarding={() => setShowOnboarding(true)}
               />
             )}
           </div>
 
           {/* Bottom navigation */}
-          <BottomNav view={view} setView={setView} favCount={favs.length}/>
+          <BottomNav view={view} setView={setView} favCount={favs.length} hideCommunity={hideCommunity}/>
 
           {/* Detail sheet */}
           {detailAnime && (
