@@ -1110,22 +1110,14 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
 }
 
 // ── Month view ─────────────────────────────────────────────────────────────────
-function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, search, tz, onOpen, onToggleFav, todayDayIdx, onOpenCommunity }: {
+function MonthView({ monthOffset, setMonthOffset, schedule, favs, onOpenCommunity }: {
   monthOffset: number;
   setMonthOffset: (fn: (v: number) => number) => void;
   schedule: Schedule;
   favs: number[];
-  favFilter: boolean;
-  search: string;
-  tz: string;
-  onOpen: (a: Anime) => void;
-  onToggleFav: (id: number) => void;
-  todayDayIdx: number;
   onOpenCommunity: (a: Anime) => void;
 }) {
   const now = new Date();
-  const [selectedDate, setSelectedDate] = useState<Date>(now);
-  const selectedDayIdx = (selectedDate.getDay() + 6) % 7;
 
   // ── Upcoming data (self-loaded) ──
   const [upcoming, setUpcoming] = useState<UpcomingAnime[]>(() => {
@@ -1164,18 +1156,9 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
   for (let i = -firstDow; i < lastDay; i++) cells.push(new Date(mYear, mMon, i + 1));
   while (cells.length % 7) cells.push(new Date(mYear, mMon + 1, cells.length - lastDay - firstDow + 1));
 
-  const getFiltered = (dayIdx: number) => {
-    let list = schedule[DAYS[dayIdx]] || [];
-    const seen = new Set<number>();
-    list = list.filter((a) => { if (seen.has(a.id)) return false; seen.add(a.id); return true; });
-    if (favFilter) list = list.filter((a) => favs.includes(a.id));
-    if (search) { const q = search.toLowerCase(); list = list.filter((a) => a.title.toLowerCase().includes(q)); }
-    return list.sort((a, b) => (a.broadcast_time || "").localeCompare(b.broadcast_time || ""));
-  };
-
-  const selectedAnime = getFiltered(selectedDayIdx);
-  const groups: Record<string, Anime[]> = {};
-  selectedAnime.forEach((a) => { const k = a.broadcast_time || "?"; if (!groups[k]) groups[k] = []; groups[k].push(a); });
+  // Dots on the grid show how many shows air that weekday (favourites in orange)
+  const getAiringCount = (dayIdx: number) => (schedule[DAYS[dayIdx]] || []).length;
+  const getFavCount    = (dayIdx: number) => (schedule[DAYS[dayIdx]] || []).filter((a) => favs.includes(a.id)).length;
 
   // Upcoming for this season — also include adjacent seasons from same month range
   const seasonUpcoming = upcoming.filter((a) => {
@@ -1210,18 +1193,19 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
             const isToday = inMonth && date.toDateString() === now.toDateString();
             const isSelected = inMonth && date.toDateString() === selectedDate.toDateString();
             const dayIdx = (date.getDay() + 6) % 7;
-            const dayAnime = inMonth ? getFiltered(dayIdx) : [];
+            const airingCount = inMonth ? getAiringCount(dayIdx) : 0;
+            const favCount    = inMonth ? getFavCount(dayIdx) : 0;
             const isSeasonPremiere = inMonth && isSeasonStartMonth && date.getDate() === 1 && seasonUpcoming.length > 0;
-            const borderCol = isToday ? OR : isSelected ? "rgba(255,255,255,.55)" : isSeasonPremiere ? "rgba(139,92,246,.55)" : dayAnime.length > 0 ? BD2 : "transparent";
-            const bgCol = inMonth ? (isToday ? `rgba(255,107,26,.14)` : isSelected ? BG4 : isSeasonPremiere ? "rgba(139,92,246,.07)" : BG3) : "transparent";
+            const borderCol = isToday ? OR : isSeasonPremiere ? "rgba(139,92,246,.55)" : airingCount > 0 ? BD2 : "transparent";
+            const bgCol = inMonth ? (isToday ? `rgba(255,107,26,.14)` : isSeasonPremiere ? "rgba(139,92,246,.07)" : BG3) : "transparent";
             return (
               <div key={ci}
-                style={{ aspectRatio:"1", borderRadius:7, border:`1.5px solid ${borderCol}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, cursor: inMonth ? "pointer" : "default", padding:2, background: bgCol, opacity: inMonth ? 1 : .12, transition:"background .15s, border-color .15s" }}
-                onClick={() => { if (inMonth) setSelectedDate(new Date(date)); }}
+                style={{ aspectRatio:"1", borderRadius:7, border:`1.5px solid ${borderCol}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2, padding:2, background: bgCol, opacity: inMonth ? 1 : .12 }}
               >
-                <div style={{ fontSize:11, fontWeight:800, color: isToday ? OR : isSelected ? TX : inMonth ? TX : MT2, lineHeight:1 }}>{date.getDate()}</div>
+                <div style={{ fontSize:11, fontWeight:800, color: isToday ? OR : inMonth ? TX : MT2, lineHeight:1 }}>{date.getDate()}</div>
                 <div style={{ display:"flex", flexWrap:"wrap", gap:1.5, justifyContent:"center", maxWidth:26 }}>
-                  {dayAnime.slice(0, 4).map((a, j) => <div key={j} style={{ width:4, height:4, borderRadius:"50%", background: favs.includes(a.id) ? OR : BD2 }}/>)}
+                  {favCount > 0 && <div style={{ width:4, height:4, borderRadius:"50%", background:OR }}/>}
+                  {airingCount > 0 && <div style={{ width:4, height:4, borderRadius:"50%", background:BD2 }}/>}
                   {isSeasonPremiere && <div style={{ width:4, height:4, borderRadius:"50%", background:"rgba(139,92,246,.9)" }}/>}
                 </div>
               </div>
@@ -1272,33 +1256,6 @@ function MonthView({ monthOffset, setMonthOffset, schedule, favs, favFilter, sea
         </div>
       )}
 
-      {/* ── Selected day schedule ── */}
-      <div style={{ borderTop:`1px solid ${BD}`, paddingTop:12 }}>
-        <div style={{ fontSize:14, fontWeight:700, marginBottom:12 }}>
-          {selectedDate.toLocaleDateString([], { day:"numeric", month:"short" })}
-          <span style={{ fontWeight:400, color:MT, marginLeft:6 }}>— {DAY_SHORT[selectedDayIdx]}'s shows ({selectedAnime.length})</span>
-        </div>
-        {selectedAnime.length === 0 ? (
-          <div style={{ textAlign:"center", padding:"24px 20px", color:MT, display:"flex", flexDirection:"column", alignItems:"center", gap:8 }}>
-            <div style={{ fontSize:32 }}>📭</div>
-            <div style={{ fontSize:13 }}>Nothing scheduled.</div>
-          </div>
-        ) : (
-          Object.entries(groups).map(([time, items]) => (
-            <div key={time}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 0 6px" }}>
-                <span style={{ fontSize:10, fontWeight:800, letterSpacing:".5px", textTransform:"uppercase", padding:"3px 10px", borderRadius:99, background:BG3, color:MT, border:`1px solid ${BD}`, flexShrink:0 }}>
-                  {time !== "?" ? `${time} JST` : "Time unknown"}
-                </span>
-                <div style={{ flex:1, height:1, background:BD }}/>
-              </div>
-              {items.map((a, idx) => (
-                <AnimeCard key={a.id} anime={a} favorites={favs} selectedDayIdx={selectedDayIdx} todayDayIdx={todayDayIdx} tz={tz} onOpen={onOpen} onToggleFav={onToggleFav} animDelay={idx * 25}/>
-              ))}
-            </div>
-          ))
-        )}
-      </div>
     </div>
   );
 }
@@ -1668,13 +1625,16 @@ function CommunityView({ favAnime, allAnime, onOpenCommunity }: { favAnime: Anim
 }
 
 // ── News view ──────────────────────────────────────────────────────────────────
-function NewsView({ favAnime }: { favAnime: any[] }) {
+const RUMOR_KEYWORDS = ["rumor", "rumour", "leak", "leaked", "allegedly", "unconfirmed", "insider", "report claims", "reportedly", "source says", "sources say", "it is said"];
+
+function NewsView({ favAnime, noSpoiler }: { favAnime: any[]; noSpoiler: boolean }) {
   const [annNews, setAnnNews] = useState<NewsItem[]>([]);
   const [favNews, setFavNews] = useState<NewsItem[]>([]);
   const [annLoading, setAnnLoading] = useState(true);
   const [favLoading, setFavLoading] = useState(true);
   const [annError, setAnnError] = useState(false);
   const [detailNews, setDetailNews] = useState<NewsItem | null>(null);
+  const [rumorRevealed, setRumorRevealed] = useState(false);
 
   const loadAnn = () => {
     setAnnLoading(true); setAnnError(false);
@@ -1738,8 +1698,46 @@ function NewsView({ favAnime }: { favAnime: any[] }) {
              <button onClick={loadAnn} style={{ background:BG3, border:`1px solid ${OR}`, color:OR, borderRadius:8, padding:"7px 16px", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Retry</button>
            </div>
          ) :
-         annNews.map((n, i) => <NewsCard key={n.id} item={n} delay={i * 20} onOpen={setDetailNews}/>)}
+         annNews.filter((n) => !RUMOR_KEYWORDS.some((kw) => n.title.toLowerCase().includes(kw) || (n.excerpt || "").toLowerCase().includes(kw)))
+           .map((n, i) => <NewsCard key={n.id} item={n} delay={i * 20} onOpen={setDetailNews}/>)}
       </div>
+
+      {/* ── Rumors & Leaks ── */}
+      {(() => {
+        const rumors = annNews.filter((n) =>
+          RUMOR_KEYWORDS.some((kw) => n.title.toLowerCase().includes(kw) || (n.excerpt || "").toLowerCase().includes(kw))
+        );
+        if (rumors.length === 0 && !annLoading) return null;
+        const blocked = noSpoiler && !rumorRevealed;
+        return (
+          <div style={{ marginTop:24 }}>
+            <SectionHeader emoji="🕵️" title="Rumors & Leaks" count={!annLoading ? rumors.length : undefined}/>
+            {blocked ? (
+              <div style={{ borderRadius:14, border:`1px solid rgba(139,92,246,.35)`, background:"rgba(139,92,246,.07)", padding:"20px 16px", textAlign:"center" }}>
+                <div style={{ fontSize:26, marginBottom:8 }}>🙈</div>
+                <div style={{ fontSize:13, fontWeight:700, color:TX, marginBottom:4 }}>No-spoiler mode is on</div>
+                <div style={{ fontSize:12, color:MT, marginBottom:14, lineHeight:1.5 }}>
+                  Rumors & leaks are hidden to keep your experience spoiler-free.<br/>
+                  Toggle <strong>👁</strong> in the header to show them globally, or tap below to reveal once.
+                </div>
+                <button
+                  onClick={() => setRumorRevealed(true)}
+                  style={{ background:"rgba(139,92,246,.18)", border:"1px solid rgba(139,92,246,.4)", color:"rgba(167,139,250,1)", borderRadius:10, padding:"9px 20px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
+                >
+                  Reveal rumors for this session
+                </button>
+              </div>
+            ) : (
+              annLoading ? [0,1].map((i) => <NewsSkeleton key={i}/>) :
+              rumors.length === 0 ? (
+                <div style={{ textAlign:"center", padding:"20px 0", color:MT, fontSize:13 }}>No rumors in the current feed.</div>
+              ) : rumors.map((n, i) => (
+                <NewsCard key={n.id} item={n} delay={i * 25} onOpen={setDetailNews}/>
+              ))
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── News detail sheet ── */}
       {detailNews && <NewsDetailSheet item={detailNews} onClose={() => setDetailNews(null)}/>}
@@ -1946,7 +1944,7 @@ function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, 
 function BottomNav({ view, setView, favCount }: { view: string; setView: (v: "schedule"|"month"|"community"|"news"|"stats") => void; favCount: number }) {
   const tabs: { id: "schedule"|"month"|"community"|"news"|"stats"; emoji: string; label: string }[] = [
     { id:"schedule",  emoji:"📋", label:"Schedule"  },
-    { id:"month",     emoji:"📅", label:"Calendar"  },
+    { id:"month",     emoji:"✨", label:"Upcoming"  },
     { id:"community", emoji:"💬", label:"Community" },
     { id:"news",      emoji:"📰", label:"News"      },
     { id:"stats",     emoji:"⭐", label:"My List"   },
@@ -2299,8 +2297,8 @@ export default function AniCal() {
                 </div>
               </div>
               <div style={{ display:"flex", gap:7, alignItems:"center" }}>
-                {/* Favs filter — only on schedule/calendar */}
-                {(view === "schedule" || view === "month") && (
+                {/* Favs filter — only on schedule */}
+                {view === "schedule" && (
                   <button
                     onClick={() => setFavFilter((v) => !v)}
                     style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 12px", borderRadius:20, border:`1px solid ${favFilter ? OR : BD}`, background: favFilter ? `linear-gradient(135deg, ${OR2}, rgba(255,107,26,0.12))` : BG3, color: favFilter ? OR : MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", transition:"all .18s", boxShadow: favFilter ? `0 0 12px rgba(255,107,26,.25)` : "none", letterSpacing:".3px" } as React.CSSProperties}
@@ -2308,13 +2306,6 @@ export default function AniCal() {
                     <span style={{ fontSize:13 }}>{favFilter ? "★" : "☆"}</span>
                     <span>Favs</span>
                   </button>
-                )}
-                {/* Refresh — only on schedule/calendar */}
-                {(view === "schedule" || view === "month") && (
-                  <button
-                    onClick={() => loadSchedule(true)}
-                    style={{ width:34, height:34, borderRadius:"50%", border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:16, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s" } as React.CSSProperties}
-                  >↻</button>
                 )}
                 {/* No-spoiler toggle — always visible */}
                 <button
@@ -2331,8 +2322,8 @@ export default function AniCal() {
               </div>
             </div>
 
-            {/* Search bar — only on schedule/calendar */}
-            {(view === "schedule" || view === "month") && (
+            {/* Search bar — only on schedule */}
+            {view === "schedule" && (
             <div style={{ padding:"0 16px 10px", position:"relative" } as React.CSSProperties}>
               <div style={{ position:"absolute", left:28, top:"50%", transform:"translateY(-50%)", pointerEvents:"none", color:MT2, fontSize:14, display:"flex" }}>
                 <svg width={15} height={15} viewBox="0 0 20 20" fill="none" style={{ opacity:.5 }}>
@@ -2400,12 +2391,6 @@ export default function AniCal() {
                 setMonthOffset={setMonthOffset}
                 schedule={schedule}
                 favs={favs}
-                favFilter={favFilter}
-                search={search}
-                tz={tz}
-                onOpen={setDetailAnime}
-                onToggleFav={toggleFav}
-                todayDayIdx={todayDayIdx}
                 onOpenCommunity={(a) => { setCommunityAnime(a); }}
               />
             )}
@@ -2413,7 +2398,7 @@ export default function AniCal() {
               <CommunityView favAnime={favAnime} allAnime={allAnime} onOpenCommunity={(a) => setCommunityAnime(a)}/>
             )}
             {view === "news" && (
-              <NewsView favAnime={favAnime}/>
+              <NewsView favAnime={favAnime} noSpoiler={noSpoiler}/>
             )}
             {view === "stats" && (
               <MyListView
