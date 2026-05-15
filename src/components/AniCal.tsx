@@ -6,23 +6,36 @@ import type { ScheduleEntry } from "@/lib/notifications";
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
+// Bulletproof external URL opener.
+// On Capacitor Android, `window.open(intent://..., "_system")` silently fails because the
+// WebView passes the raw URI to Intent.ACTION_VIEW which doesn't know how to parse the
+// intent: scheme. So we drop intent URLs entirely and use plain HTTPS — Android's
+// App Links system routes the URL to the installed app automatically (Crunchyroll,
+// Netflix, HIDIVE, Hulu, YouTube all register App Links for their domains).
+//
+// The anchor-click fallback is needed because some Capacitor versions block window.open
+// when popup permission heuristics misfire. Anchor click reliably triggers Capacitor's
+// onCreateWindow → startActivity(Intent.ACTION_VIEW) path.
 function openUrl(url: string) {
-  window.open(url, IS_NATIVE ? "_system" : "_blank");
+  if (!url) return;
+  try {
+    const opened = window.open(url, IS_NATIVE ? "_system" : "_blank", "noopener,noreferrer");
+    if (opened) return;
+  } catch { /* fall through */ }
+  // Anchor click fallback — most reliable in Capacitor WebViews
+  try {
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { try { document.body.removeChild(a); } catch {} }, 0);
+  } catch { /* nothing else we can do */ }
 }
 
-function openCrunchyroll(title: string) {
-  const web = `https://www.crunchyroll.com/search?q=${encodeURIComponent(title)}`;
-  if (IS_NATIVE) {
-    // Try the Crunchyroll app first (Android intent); if not installed, falls back to browser
-    const fallback = encodeURIComponent(web);
-    const intent = `intent://search?q=${encodeURIComponent(title)}#Intent;scheme=crunchyroll;package=com.crunchyroll.crunchyroid;S.browser_fallback_url=${fallback};end`;
-    window.open(intent, "_system");
-  } else {
-    window.open(web, "_blank");
-  }
-}
-
-// Streaming platform launchers — try the native app first on Android, browser fallback otherwise
+// Streaming platforms — Android App Links route to the installed app if present.
 type StreamingPlatform = { id: string; label: string; emoji: string; color: string };
 const PLATFORMS: StreamingPlatform[] = [
   { id: "crunchyroll", label: "Crunchyroll",  emoji: "🍥", color: "#F47521" },
@@ -34,35 +47,20 @@ const PLATFORMS: StreamingPlatform[] = [
 
 function openStreaming(platformId: string, title: string) {
   const q = encodeURIComponent(title);
-  let web = "";
-  let intent: string | null = null;
+  let url = "";
   switch (platformId) {
-    case "crunchyroll":
-      web = `https://www.crunchyroll.com/search?q=${q}`;
-      intent = `intent://search?q=${q}#Intent;scheme=crunchyroll;package=com.crunchyroll.crunchyroid;S.browser_fallback_url=${encodeURIComponent(web)};end`;
-      break;
-    case "netflix":
-      web = `https://www.netflix.com/search?q=${q}`;
-      intent = `intent://www.netflix.com/search?q=${q}#Intent;scheme=https;package=com.netflix.mediaclient;S.browser_fallback_url=${encodeURIComponent(web)};end`;
-      break;
-    case "hidive":
-      web = `https://www.hidive.com/search?q=${q}`;
-      intent = `intent://www.hidive.com/search?q=${q}#Intent;scheme=https;package=com.hidive.tv;S.browser_fallback_url=${encodeURIComponent(web)};end`;
-      break;
-    case "hulu":
-      web = `https://www.hulu.com/search?q=${q}`;
-      intent = `intent://www.hulu.com/search?q=${q}#Intent;scheme=https;package=com.hulu.plus;S.browser_fallback_url=${encodeURIComponent(web)};end`;
-      break;
-    case "youtube":
-      web = `https://www.youtube.com/results?search_query=${q}+anime+trailer`;
-      intent = `intent://www.youtube.com/results?search_query=${q}+anime+trailer#Intent;scheme=https;package=com.google.android.youtube;S.browser_fallback_url=${encodeURIComponent(web)};end`;
-      break;
-    default:
-      web = `https://www.google.com/search?q=${q}+watch+anime`;
+    case "crunchyroll": url = `https://www.crunchyroll.com/search?q=${q}`; break;
+    case "netflix":     url = `https://www.netflix.com/search?q=${q}`;     break;
+    case "hidive":      url = `https://www.hidive.com/search?q=${q}`;      break;
+    case "hulu":        url = `https://www.hulu.com/search?q=${q}`;        break;
+    case "youtube":     url = `https://www.youtube.com/results?search_query=${q}+anime`; break;
+    default:            url = `https://www.google.com/search?q=${q}+watch+anime`;
   }
-  if (IS_NATIVE && intent) window.open(intent, "_system");
-  else window.open(web, IS_NATIVE ? "_system" : "_blank");
+  openUrl(url);
 }
+
+// Keep openCrunchyroll alias for compatibility — now uses the same fixed opener
+function openCrunchyroll(title: string) { openStreaming("crunchyroll", title); }
 
 async function shareAnime(anime: { title: string; mal_url?: string | null; image_url?: string | null }) {
   const url = anime.mal_url || `https://myanimelist.net/search/all?q=${encodeURIComponent(anime.title)}`;
@@ -487,6 +485,11 @@ const GLOBAL_CSS = `
   @keyframes fadeIn{from{opacity:0}to{opacity:1}}
   @keyframes fadeOut{from{opacity:1}to{opacity:0}}
   @keyframes sheetUp{from{transform:translate(-50%,34px);opacity:0}to{transform:translate(-50%,0);opacity:1}}
+  @keyframes sheetUpScale{0%{transform:translate(-50%,42px) scale(.97);opacity:0}65%{opacity:1}100%{transform:translate(-50%,0) scale(1);opacity:1}}
+  @keyframes detailEl{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes heroIn{0%{opacity:0;transform:scale(1.08)}100%{opacity:1;transform:scale(1)}}
+  @keyframes viewIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes viewInFade{from{opacity:0}to{opacity:1}}
   @keyframes cardIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
   @keyframes ripple{0%{transform:scale(0);opacity:.6}80%{opacity:.15}100%{transform:scale(3);opacity:0}}
   @keyframes logoEnter{0%{transform:scale(2.2);opacity:0;filter:blur(20px)}55%{transform:scale(.92);opacity:1;filter:blur(0)}100%{transform:scale(1);opacity:1;filter:blur(0)}}
@@ -775,88 +778,60 @@ function AnimeCard({ anime, favorites, onOpen, onToggleFav, tz, animDelay = 0, t
   );
 }
 
-// ── Trailer player ─────────────────────────────────────────────────────────────
-// Fetches the YouTube trailer ID from Jikan on-demand; autoplays muted.
-// Tap anywhere on the video (or the ⏹ button) to stop. Tap the thumbnail to replay.
-// noSpoiler=true → shows static cover image only (no fetch, no video).
-function TrailerPlayer({ animeId, imageUrl, noSpoiler }: { animeId: number; imageUrl?: string | null; noSpoiler: boolean }) {
-  const [ytId, setYtId] = useState<string | null | undefined>(undefined); // undefined=loading, null=none
-  const [playing, setPlaying] = useState(false);
+// ── Hero cover ─────────────────────────────────────────────────────────────────
+// Trailers used to embed an autoplay YouTube iframe but users found that too noisy.
+// Now we just show the cover image. If the anime has a known YouTube trailer
+// (current/recent season only), we expose a "Watch trailer on YouTube" link via
+// useAnimeTrailer that the parent surfaces as a button.
+function HeroCover({ imageUrl }: { imageUrl?: string | null }) {
+  if (!imageUrl) return null;
+  return (
+    <div style={{ position:"relative", width:"100%", height:220, borderRadius:14, marginBottom:16, overflow:"hidden", background:BG4 }}>
+      <img
+        src={imageUrl}
+        alt="Cover art"
+        loading="lazy"
+        decoding="async"
+        style={{ width:"100%", height:"100%", objectFit:"cover", objectPosition:"top", display:"block", animation:"heroIn .5s cubic-bezier(.2,.7,.2,1) both" } as React.CSSProperties}
+      />
+      {/* Subtle vignette to anchor the title underneath */}
+      <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, transparent 60%, rgba(0,0,0,.18))", pointerEvents:"none" }}/>
+    </div>
+  );
+}
 
+// Hook: fetches Jikan trailer YouTube ID for the anime on demand.
+// Returns null when no relevant trailer is available (or noSpoiler is on).
+function useAnimeTrailer(animeId: number, noSpoiler: boolean): string | null {
+  const [ytId, setYtId] = useState<string | null>(null);
   useEffect(() => {
-    if (noSpoiler) return;
+    if (noSpoiler) { setYtId(null); return; }
     let cancelled = false;
     fetch(`https://api.jikan.moe/v4/anime/${animeId}`, { signal: AbortSignal.timeout(8000) })
       .then((r) => r.json())
       .then((j) => {
         if (cancelled) return;
-        // Only show trailer if the anime is currently airing or released recently
-        // (prevents showing an old Season-1 PV for a currently-airing sequel season)
         const currentYear = new Date().getFullYear();
         const isRelevant =
           j.data?.airing === true ||
           (j.data?.year != null && j.data.year >= currentYear - 1);
         if (!isRelevant) { setYtId(null); return; }
-        // youtube_id is often null even when embed_url has the real ID — parse both
         const id: string | null =
           j.data?.trailer?.youtube_id ||
           j.data?.trailer?.embed_url?.match(/embed\/([^?&]+)/)?.[1] ||
           null;
         setYtId(id);
-        if (id) setPlaying(true);
       })
       .catch(() => { if (!cancelled) setYtId(null); });
     return () => { cancelled = true; };
   }, [animeId, noSpoiler]);
-
-  const imgStyle: React.CSSProperties = { width:"100%", height:220, objectFit:"cover", objectPosition:"top", borderRadius:14, marginBottom:16, background:BG4, display:"block" };
-
-  // No-spoiler → static cover only
-  if (noSpoiler) return imageUrl ? <img src={imageUrl} alt="Cover art" loading="lazy" decoding="async" style={imgStyle}/> : null;
-
-  // Loading or no trailer → static cover
-  if (!ytId) return imageUrl ? <img src={imageUrl} alt="Cover art" loading="lazy" decoding="async" style={imgStyle}/> : null;
-
-  // Trailer stopped → YouTube thumbnail + play button
-  if (!playing) {
-    return (
-      <div style={{ position:"relative", width:"100%", height:220, borderRadius:14, overflow:"hidden", marginBottom:16, background:"#000", cursor:"pointer" }} onClick={() => setPlaying(true)}>
-        <img src={`https://img.youtube.com/vi/${ytId}/hqdefault.jpg`} alt="" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block", opacity:.75 }}/>
-        <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,.35)" }}>
-          <div style={{ width:58, height:58, borderRadius:"50%", background:"rgba(255,255,255,.92)", display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <span style={{ fontSize:22, marginLeft:5, lineHeight:1 }}>▶</span>
-          </div>
-        </div>
-        <div style={{ position:"absolute", top:10, left:12, background:"rgba(220,0,0,.85)", borderRadius:5, padding:"3px 8px", fontSize:9, fontWeight:800, color:"#fff", letterSpacing:".6px" }}>TRAILER</div>
-      </div>
-    );
-  }
-
-  // Playing → iframe + invisible tap overlay
-  return (
-    <div style={{ position:"relative", width:"100%", borderRadius:14, overflow:"hidden", marginBottom:16, background:"#000" }}>
-      <iframe
-        src={`https://www.youtube.com/embed/${ytId}?autoplay=1&mute=1&rel=0&modestbranding=1&playsinline=1`}
-        style={{ width:"100%", height:220, border:"none", display:"block" }}
-        allow="autoplay; encrypted-media; picture-in-picture"
-        allowFullScreen
-        title="Anime Trailer"
-      />
-      {/* Full-area tap overlay — captures any tap on the video and stops it */}
-      <div
-        onClick={() => setPlaying(false)}
-        style={{ position:"absolute", inset:0, cursor:"pointer", display:"flex", alignItems:"flex-start", justifyContent:"flex-end", padding:10 }}
-      >
-        <button style={{ background:"rgba(0,0,0,.65)", border:"none", color:"#fff", borderRadius:6, padding:"5px 10px", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit", backdropFilter:"blur(4px)", display:"flex", alignItems:"center", gap:4 } as React.CSSProperties}>
-          <span>⏹</span><span>Stop</span>
-        </button>
-      </div>
-    </div>
-  );
+  return ytId;
 }
 
 // ── Detail sheet ───────────────────────────────────────────────────────────────
 function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, noSpoiler, tz, onToast }: { anime: Anime | null; favorites: number[]; onClose: () => void; onToggleFav: (id: number) => void; onOpenCommunity: (a: Anime) => void; noSpoiler: boolean; tz: string; onToast: (m: string) => void }) {
+  // Hooks must run unconditionally — provide a safe fallback id
+  const trailerYtId = useAnimeTrailer(anime?.id ?? 0, noSpoiler);
   if (!anime) return null;
   const isFav = favorites.includes(anime.id);
   const localTime = jstToLocal(anime.broadcast_time, tz);
@@ -868,13 +843,16 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, 
   };
   return (
     <>
-      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.82)", zIndex:200, animation:"fadeIn .2s ease-out", backdropFilter:"blur(6px)" } as React.CSSProperties} onClick={onClose}/>
-      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"88vh", overflowY:"auto", zIndex:201, animation:"sheetUp .3s cubic-bezier(.2,.7,.2,1)" }}>
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.82)", zIndex:200, animation:"fadeIn .25s ease-out", backdropFilter:"blur(6px)" } as React.CSSProperties} onClick={onClose}/>
+      <div role="dialog" aria-modal="true" aria-label={anime.title}
+        style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"88vh", overflowY:"auto", zIndex:201, animation:"sheetUpScale .42s cubic-bezier(.2,.85,.2,1) both", willChange:"transform, opacity" } as React.CSSProperties}>
         <div style={{ width:40, height:4, background:BD2, borderRadius:2, margin:"14px auto 0" }}/>
         <div style={{ padding:"16px 20px 48px" }}>
-          <TrailerPlayer animeId={anime.id} imageUrl={anime.image_url} noSpoiler={noSpoiler}/>
-          <div style={{ fontSize:21, fontWeight:800, lineHeight:1.2, marginBottom:8 }}>{anime.title}</div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
+          <div style={{ animation:"detailEl .45s 0ms cubic-bezier(.2,.7,.2,1) both" } as React.CSSProperties}>
+            <HeroCover imageUrl={anime.image_url}/>
+          </div>
+          <div style={{ animation:"detailEl .42s 60ms cubic-bezier(.2,.7,.2,1) both", fontSize:21, fontWeight:800, lineHeight:1.2, marginBottom:8 } as React.CSSProperties}>{anime.title}</div>
+          <div style={{ animation:"detailEl .42s 110ms cubic-bezier(.2,.7,.2,1) both", display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 } as React.CSSProperties}>
             {anime.score && <span style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:6, background:OR2, color:OR, border:`1px solid ${OR3}` }}>★ {anime.score}</span>}
             {anime.year && <span style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:6, background:BG4, color:MT, border:`1px solid ${BD}` }}>{anime.year}</span>}
             {anime.season && <span style={{ fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:6, background:BG4, color:MT, border:`1px solid ${BD}` }}>{capitalize(anime.season)}</span>}
@@ -934,12 +912,24 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, 
                 </button>
               ))}
             </div>
+            {/* Trailer link — only shown when Jikan returns a current/recent trailer */}
+            {trailerYtId && !noSpoiler && (
+              <button
+                aria-label="Watch official trailer on YouTube"
+                onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); openUrl(`https://www.youtube.com/watch?v=${trailerYtId}`); }}
+                style={{ width:"100%", padding:"11px 14px", borderRadius:10, border:"1px solid rgba(220,0,0,.5)", background:"linear-gradient(135deg, rgba(220,0,0,.18), rgba(220,0,0,.08))", color:"#fff", fontSize:13, fontWeight:800, cursor:"pointer", fontFamily:"inherit", marginTop:2, display:"flex", alignItems:"center", justifyContent:"center", gap:7 } as React.CSSProperties}
+              >
+                <Icon name="play" size={14} color="#ff6b6b"/>
+                <span>Watch trailer on YouTube</span>
+              </button>
+            )}
             <button
               aria-label="Search this title on YouTube"
               onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); openStreaming("youtube", anime.title); }}
-              style={{ width:"100%", padding:10, borderRadius:10, border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", marginTop:2 }}
+              style={{ width:"100%", padding:10, borderRadius:10, border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", marginTop:2, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}
             >
-              ▶️ More clips on YouTube
+              <Icon name="external" size={12} color={MT}/>
+              <span>More on YouTube</span>
             </button>
           </div>
         </div>
@@ -2305,7 +2295,7 @@ function FavCard({ anime, delay, tz, notifEnabled, perAnimeNotif, toggleAnimeNot
 }
 
 // ── My List view ───────────────────────────────────────────────────────────────
-function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, topGenre, notifSettings, setNotifSettings, notifPerm, requestNotifPerm, testNotif, onOpen, toggleFav, installPwa, downloadExtension, tick, hideCommunity, setHideCommunity, noSpoiler, setNoSpoiler, dark, setDark, onShowOnboarding }: any) {
+function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, topGenre, notifSettings, setNotifSettings, notifPerm, requestNotifPerm, testNotif, onOpen, toggleFav, installPwa, downloadExtension, tick }: any) {
   const now = new Date();
   const withNext = favAnime.map((a: any) => ({ ...a, __next: nextJstAiringDate(a.broadcast_day, a.broadcast_time) }))
     .sort((a: any, b: any) => {
@@ -2436,59 +2426,7 @@ function MyListView({ favAnime, todayDayIdx, tz, favs, totalAnime, airingToday, 
         ))
       )}
 
-      {/* ── Settings ── */}
-      <div style={{ marginTop:30 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14, fontSize:12, fontWeight:700, color:MT, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
-          <Icon name="settings" size={14} color={MT} strokeWidth={2}/>
-          <span>Settings</span>
-          <div style={{ flex:1, height:1, background:BD }}/>
-        </div>
-
-        <div style={{ background:BG2, border:`1px solid ${BD}`, borderRadius:14, overflow:"hidden" }}>
-          {/* Dark mode */}
-          <SettingRow
-            icon={dark ? "moon" : "sun"}
-            label="Theme"
-            description={dark ? "Dark mode" : "Light mode"}
-            checked={!dark}
-            onToggle={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setDark((v: boolean) => !v); }}
-            toggleLabel={dark ? "Switch to light" : "Switch to dark"}
-          />
-
-          {/* No-spoiler */}
-          <SettingRow
-            icon={noSpoiler ? "spoiler" : "eye"}
-            label="No-spoiler mode"
-            description={noSpoiler ? "Trailers + rumors hidden" : "Trailers + rumors visible"}
-            checked={noSpoiler}
-            onToggle={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setNoSpoiler((v: boolean) => !v); }}
-            toggleLabel="Toggle no-spoiler"
-          />
-
-          {/* Hide Community */}
-          <SettingRow
-            icon="community"
-            label="Community tab"
-            description={hideCommunity ? "Hidden from bottom nav" : "Visible in bottom nav"}
-            checked={!hideCommunity}
-            onToggle={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setHideCommunity((v: boolean) => !v); }}
-            toggleLabel="Toggle community visibility"
-            last
-          />
-        </div>
-
-        {/* Onboarding replay + version */}
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:14, padding:"4px 4px 0" }}>
-          <button
-            onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); onShowOnboarding(); }}
-            style={{ background:"none", border:"none", color:MT2, fontSize:12, cursor:"pointer", fontFamily:"inherit", padding:6, display:"inline-flex", alignItems:"center", gap:5 }}
-          >
-            <Icon name="play" size={11} color={MT2}/>
-            <span>Replay intro</span>
-          </button>
-          <span style={{ fontSize:10, color:MT2 }}>AniCal · made with ♥</span>
-        </div>
-      </div>
+      {/* Settings now lives in the header gear → SettingsSheet. */}
 
     </div>
   );
@@ -2623,6 +2561,133 @@ function BottomNav({ view, setView, favCount, hideCommunity }: { view: string; s
   );
 }
 
+
+// ── Settings sheet ─────────────────────────────────────────────────────────────
+// Opens from the header gear. Houses all global preferences in one place so the
+// header stays uncluttered and My List stops being a junk-drawer for settings.
+function SettingsSheet({ open, onClose, dark, setDark, noSpoiler, setNoSpoiler, hideCommunity, setHideCommunity, onShowOnboarding }: {
+  open: boolean;
+  onClose: () => void;
+  dark: boolean;
+  setDark: (fn: (v: boolean) => boolean) => void;
+  noSpoiler: boolean;
+  setNoSpoiler: (fn: (v: boolean) => boolean) => void;
+  hideCommunity: boolean;
+  setHideCommunity: (fn: (v: boolean) => boolean) => void;
+  onShowOnboarding: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <>
+      <div
+        onClick={onClose}
+        style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.82)", zIndex:300, animation:"fadeIn .22s ease-out", backdropFilter:"blur(6px)" } as React.CSSProperties}
+      />
+      <div role="dialog" aria-modal="true" aria-label="Settings"
+        style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"88vh", overflowY:"auto", zIndex:301, animation:"sheetUpScale .4s cubic-bezier(.2,.85,.2,1) both" } as React.CSSProperties}
+      >
+        <div style={{ width:40, height:4, background:BD2, borderRadius:2, margin:"14px auto 0" }}/>
+
+        {/* Header */}
+        <div style={{ padding:"16px 22px 8px", display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:36, height:36, borderRadius:10, background:`linear-gradient(135deg, ${OR}, #cc5610)`, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 4px 14px rgba(255,107,26,.35)` }}>
+            <Icon name="settings" size={18} color="#fff"/>
+          </div>
+          <div>
+            <div style={{ fontSize:20, fontWeight:900, color:TX, letterSpacing:"-.5px" }}>Settings</div>
+            <div style={{ fontSize:11.5, color:MT, marginTop:1 }}>Customize your AniCal experience</div>
+          </div>
+          <button
+            aria-label="Close settings"
+            onClick={onClose}
+            style={{ marginLeft:"auto", width:34, height:34, borderRadius:"50%", background:BG3, border:`1px solid ${BD}`, color:MT, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontFamily:"inherit" } as React.CSSProperties}
+          >
+            <Icon name="close" size={16} color={MT}/>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding:"14px 22px 36px" }}>
+          {/* Appearance */}
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, fontSize:11, fontWeight:700, color:MT2, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
+            <Icon name={dark ? "moon" : "sun"} size={12} color={MT2}/>
+            <span>Appearance</span>
+          </div>
+          <div style={{ background:BG2, border:`1px solid ${BD}`, borderRadius:14, overflow:"hidden", marginBottom:18 }}>
+            <SettingRow
+              icon={dark ? "moon" : "sun"}
+              label="Theme"
+              description={dark ? "Dark mode is on" : "Light mode is on"}
+              checked={!dark}
+              onToggle={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setDark((v) => !v); }}
+              toggleLabel={dark ? "Switch to light" : "Switch to dark"}
+              last
+            />
+          </div>
+
+          {/* Content */}
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, fontSize:11, fontWeight:700, color:MT2, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
+            <Icon name="eye" size={12} color={MT2}/>
+            <span>Content</span>
+          </div>
+          <div style={{ background:BG2, border:`1px solid ${BD}`, borderRadius:14, overflow:"hidden", marginBottom:18 }}>
+            <SettingRow
+              icon={noSpoiler ? "spoiler" : "eye"}
+              label="No-spoiler mode"
+              description={noSpoiler ? "Trailers & rumors hidden" : "Trailers & rumors visible"}
+              checked={noSpoiler}
+              onToggle={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setNoSpoiler((v) => !v); }}
+              toggleLabel="Toggle no-spoiler"
+              last
+            />
+          </div>
+
+          {/* Navigation */}
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, fontSize:11, fontWeight:700, color:MT2, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
+            <Icon name="community" size={12} color={MT2}/>
+            <span>Navigation</span>
+          </div>
+          <div style={{ background:BG2, border:`1px solid ${BD}`, borderRadius:14, overflow:"hidden", marginBottom:18 }}>
+            <SettingRow
+              icon="community"
+              label="Community tab"
+              description={hideCommunity ? "Hidden from bottom nav" : "Visible in bottom nav"}
+              checked={!hideCommunity}
+              onToggle={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setHideCommunity((v) => !v); }}
+              toggleLabel="Toggle community visibility"
+              last
+            />
+          </div>
+
+          {/* About */}
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, fontSize:11, fontWeight:700, color:MT2, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
+            <Icon name="news" size={12} color={MT2}/>
+            <span>About</span>
+          </div>
+          <div style={{ background:BG2, border:`1px solid ${BD}`, borderRadius:14, overflow:"hidden" }}>
+            <button
+              onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); onClose(); setTimeout(onShowOnboarding, 200); }}
+              style={{ width:"100%", padding:"14px 16px", background:"transparent", border:"none", display:"flex", alignItems:"center", gap:14, cursor:"pointer", fontFamily:"inherit", textAlign:"left" as const, color:TX } as React.CSSProperties}
+            >
+              <div style={{ width:36, height:36, borderRadius:10, background:BG3, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                <Icon name="play" size={16} color={OR}/>
+              </div>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:13.5, fontWeight:700, color:TX, letterSpacing:"-.05px" }}>Replay welcome tour</div>
+                <div style={{ fontSize:11, color:MT, marginTop:2 }}>See the 4-step intro again</div>
+              </div>
+              <Icon name="chevronRight" size={14} color={MT2}/>
+            </button>
+          </div>
+
+          <div style={{ textAlign:"center", marginTop:24, fontSize:11, color:MT2 }}>
+            AniCal · made with ♥ for anime fans
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
 // ── Onboarding (first launch only) ─────────────────────────────────────────────
 const ONBOARDING_STEPS = [
@@ -2763,6 +2828,7 @@ export default function AniCal() {
   const [noSpoiler, setNoSpoiler] = useState<boolean>(() => LS.get<boolean>("anical_no_spoiler", false));
   const [hideCommunity, setHideCommunity] = useState<boolean>(() => LS.get<boolean>("anical_hide_community", false));
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => !LS.get<boolean>("anical_onboarded_v1", false));
+  const [showSettings, setShowSettings] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const tz = "auto";
@@ -3090,7 +3156,7 @@ export default function AniCal() {
                     <span>Favs</span>
                   </button>
                 )}
-                {/* No-spoiler toggle — always visible */}
+                {/* No-spoiler toggle — quick access privacy switch */}
                 <button
                   aria-label={noSpoiler ? "No-spoiler mode on — tap to disable" : "Enable no-spoiler mode (hide trailers and rumors)"}
                   aria-pressed={noSpoiler}
@@ -3100,15 +3166,14 @@ export default function AniCal() {
                 >
                   <Icon name={noSpoiler ? "eyeOff" : "eye"} size={17} color={noSpoiler ? "rgba(167,139,250,1)" : MT}/>
                 </button>
-                {/* Dark / light toggle — always visible */}
+                {/* Settings — opens the full settings sheet (theme, community visibility, etc.) */}
                 <button
-                  aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
-                  aria-pressed={!dark}
-                  onClick={() => { setDark((v) => !v); Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); }}
-                  title={dark ? "Switch to light mode" : "Switch to dark mode"}
+                  aria-label="Open settings"
+                  onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setShowSettings(true); }}
+                  title="Settings"
                   style={{ width:38, height:38, borderRadius:"50%", border:`1px solid ${BD}`, background:BG3, color:MT, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", transition:"all .18s", flexShrink:0 } as React.CSSProperties}
                 >
-                  <Icon name={dark ? "sun" : "moon"} size={17} color={MT}/>
+                  <Icon name="settings" size={17} color={MT}/>
                 </button>
               </div>
             </div>
@@ -3156,59 +3221,67 @@ export default function AniCal() {
           {/* Pull-to-refresh indicator */}
           <PullIndicator visible={pullVisible} spinning={refreshing}/>
 
-          {/* Main content */}
+          {/* Main content — each view fades+rises in on tab switch */}
           <div style={{ padding:"0 0 88px" }}>
-            {view === "schedule" && (
-              <ScheduleView
-                anime={getFiltered(selectedDay)}
-                selectedDay={selectedDay}
-                setSelectedDay={setSelectedDay}
-                todayDayIdx={todayDayIdx}
-                dayNavRef={dayNavRef}
-                schedule={schedule}
-                favs={favs}
-                favFilter={favFilter}
-                search={search}
-                tz={tz}
-                onOpen={setDetailAnime}
-                onToggleFav={toggleFav}
-                tick={tick}
-                topGenres={topGenres}
-                genreFilter={genreFilter}
-                setGenreFilter={setGenreFilter}
-              />
-            )}
-            {view === "month" && (
-              <MonthView
-                schedule={schedule}
-                favs={favs}
-                onOpenCommunity={(a) => { setCommunityAnime(a); }}
-              />
-            )}
-            {view === "community" && (
-              <CommunityView favAnime={favAnime} allAnime={allAnime} onOpenCommunity={(a) => setCommunityAnime(a)}/>
-            )}
-            {view === "news" && (
-              <NewsView favAnime={favAnime} noSpoiler={noSpoiler}/>
-            )}
-            {view === "stats" && (
-              <MyListView
-                favAnime={favAnime} todayDayIdx={todayDayIdx} tz={tz} favs={favs}
-                totalAnime={totalAnime} airingToday={airingToday} topGenre={topGenre}
-                notifSettings={notifSettings} setNotifSettings={setNotifSettings}
-                notifPerm={notifPerm} requestNotifPerm={requestNotifPerm} testNotif={testNotif}
-                onOpen={setDetailAnime} toggleFav={toggleFav}
-                installPwa={installPwa} downloadExtension={downloadExtension} tick={tick}
-                hideCommunity={hideCommunity} setHideCommunity={setHideCommunity}
-                noSpoiler={noSpoiler} setNoSpoiler={setNoSpoiler}
-                dark={dark} setDark={setDark}
-                onShowOnboarding={() => setShowOnboarding(true)}
-              />
-            )}
+            <div key={view} style={{ animation:"viewIn .28s cubic-bezier(.2,.7,.2,1) both" } as React.CSSProperties}>
+              {view === "schedule" && (
+                <ScheduleView
+                  anime={getFiltered(selectedDay)}
+                  selectedDay={selectedDay}
+                  setSelectedDay={setSelectedDay}
+                  todayDayIdx={todayDayIdx}
+                  dayNavRef={dayNavRef}
+                  schedule={schedule}
+                  favs={favs}
+                  favFilter={favFilter}
+                  search={search}
+                  tz={tz}
+                  onOpen={setDetailAnime}
+                  onToggleFav={toggleFav}
+                  tick={tick}
+                  topGenres={topGenres}
+                  genreFilter={genreFilter}
+                  setGenreFilter={setGenreFilter}
+                />
+              )}
+              {view === "month" && (
+                <MonthView
+                  schedule={schedule}
+                  favs={favs}
+                  onOpenCommunity={(a) => { setCommunityAnime(a); }}
+                />
+              )}
+              {view === "community" && (
+                <CommunityView favAnime={favAnime} allAnime={allAnime} onOpenCommunity={(a) => setCommunityAnime(a)}/>
+              )}
+              {view === "news" && (
+                <NewsView favAnime={favAnime} noSpoiler={noSpoiler}/>
+              )}
+              {view === "stats" && (
+                <MyListView
+                  favAnime={favAnime} todayDayIdx={todayDayIdx} tz={tz} favs={favs}
+                  totalAnime={totalAnime} airingToday={airingToday} topGenre={topGenre}
+                  notifSettings={notifSettings} setNotifSettings={setNotifSettings}
+                  notifPerm={notifPerm} requestNotifPerm={requestNotifPerm} testNotif={testNotif}
+                  onOpen={setDetailAnime} toggleFav={toggleFav}
+                  installPwa={installPwa} downloadExtension={downloadExtension} tick={tick}
+                />
+              )}
+            </div>
           </div>
 
           {/* Bottom navigation */}
           <BottomNav view={view} setView={setView} favCount={favs.length} hideCommunity={hideCommunity}/>
+
+          {/* Settings sheet — opens from the header gear button */}
+          <SettingsSheet
+            open={showSettings}
+            onClose={() => setShowSettings(false)}
+            dark={dark} setDark={setDark}
+            noSpoiler={noSpoiler} setNoSpoiler={setNoSpoiler}
+            hideCommunity={hideCommunity} setHideCommunity={setHideCommunity}
+            onShowOnboarding={() => setShowOnboarding(true)}
+          />
 
           {/* Detail sheet */}
           {detailAnime && (
