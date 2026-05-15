@@ -174,6 +174,31 @@ type CommunityThread = {
   last_post: string;
 };
 
+// Art-sharing types — Instagram-like feed inside Community
+type ArtPost = {
+  id: string;
+  anime_id: number | null;
+  anime_title: string | null;
+  nickname: string;
+  avatar_color: string;
+  image_url: string;
+  caption: string;
+  likes: number;
+  comment_count: number;
+  status: "pending" | "approved" | "rejected" | "flagged";
+  flag_count: number;
+  created_at: string;
+};
+
+type ArtComment = {
+  id: string;
+  art_id: string;
+  nickname: string;
+  avatar_color: string;
+  message: string;
+  created_at: string;
+};
+
 const DEFAULT_NOTIF: NotifSettings = { enabled: false, leadMinutes: 10, perAnime: {} };
 
 // ── Season helpers ─────────────────────────────────────────────────────────────
@@ -480,6 +505,124 @@ async function reactToPost(post: CommunityPost, emoji: string): Promise<void> {
     method: "PATCH",
     body: JSON.stringify({ reactions: updated }),
   });
+}
+
+// ── Art-sharing helpers (Supabase) ─────────────────────────────────────────────
+// All inserts default to status='pending' on the server (RLS-enforced) so the
+// dev can moderate. The client never sees pending posts in the feed.
+
+async function fetchArtPosts(animeId?: number, limit: number = 60): Promise<ArtPost[]> {
+  const animeFilter = animeId ? `&anime_id=eq.${animeId}` : "";
+  return sbRequest<ArtPost[]>(
+    `community_art?status=eq.approved${animeFilter}&order=created_at.desc&limit=${limit}`
+  );
+}
+
+async function submitArtPost(p: {
+  anime_id: number | null;
+  anime_title: string | null;
+  nickname: string;
+  avatar_color: string;
+  image_url: string;
+  storage_path: string;
+  caption: string;
+}): Promise<ArtPost> {
+  const arr = await sbRequest<ArtPost[]>("community_art", {
+    method: "POST",
+    body: JSON.stringify({ ...p, likes: 0, comment_count: 0, status: "pending", flag_count: 0 }),
+  });
+  return arr[0];
+}
+
+async function fetchArtComments(artId: string): Promise<ArtComment[]> {
+  return sbRequest<ArtComment[]>(
+    `community_art_comments?art_id=eq.${artId}&order=created_at.asc&limit=200`
+  );
+}
+
+async function submitArtComment(p: {
+  art_id: string;
+  nickname: string;
+  avatar_color: string;
+  message: string;
+}): Promise<ArtComment> {
+  const arr = await sbRequest<ArtComment[]>("community_art_comments", {
+    method: "POST",
+    body: JSON.stringify(p),
+  });
+  return arr[0];
+}
+
+async function likeArtPost(postId: string, currentLikes: number): Promise<void> {
+  await sbRequest(`community_art?id=eq.${postId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ likes: currentLikes + 1 }),
+  });
+}
+
+async function flagArtPost(postId: string, currentFlags: number): Promise<void> {
+  const nextFlags = currentFlags + 1;
+  await sbRequest(`community_art?id=eq.${postId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      flag_count: nextFlags,
+      // Auto-hide after 3 flags so abusive content disappears even before manual review
+      status: nextFlags >= 3 ? "flagged" : "approved",
+    }),
+  });
+}
+
+// Client-side image compression: resize to max 1080px and re-encode to JPEG ~85.
+// Keeps uploads small (~100-400KB) so Supabase Storage stays within free tier longer
+// and post fetches stay snappy.
+async function compressImage(file: File, maxDim: number = 1080, quality: number = 0.85): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn't read file"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Couldn't decode image"));
+      img.onload = () => {
+        const ratio = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const w = Math.round(img.width * ratio);
+        const h = Math.round(img.height * ratio);
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return reject(new Error("Canvas unavailable"));
+        ctx.drawImage(img, 0, 0, w, h);
+        canvas.toBlob((blob) => {
+          if (!blob) return reject(new Error("Couldn't compress image"));
+          resolve(blob);
+        }, "image/jpeg", quality);
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+// Upload a Blob to the public Supabase Storage bucket "art" and return the public URL.
+async function uploadArtImage(blob: Blob): Promise<{ url: string; path: string }> {
+  const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.jpg`;
+  const path = fileName;
+  const res = await fetch(`${SB_URL}/storage/v1/object/art/${path}`, {
+    method: "POST",
+    headers: {
+      "apikey": SB_ANON,
+      "Authorization": `Bearer ${SB_ANON}`,
+      "Content-Type": "image/jpeg",
+      "x-upsert": "false",
+    },
+    body: blob,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Upload failed (${res.status}) ${text.slice(0, 120)}`);
+  }
+  const url = `${SB_URL}/storage/v1/object/public/art/${path}`;
+  return { url, path };
 }
 
 // ── Global CSS ─────────────────────────────────────────────────────────────────
@@ -2161,8 +2304,621 @@ function NewsSkeleton({ withHero = true }: { withHero?: boolean }) {
   );
 }
 
+// ── Art post detail sheet ──────────────────────────────────────────────────────
+// Instagram-style post detail: full-size image, caption, like, comments,
+// report (auto-hides at 3 flags), and a link to the anime detail when tagged.
+function ArtPostSheet({ post, onClose, onUpdated, onOpenAnime, allAnime, onToast }: {
+  post: ArtPost;
+  onClose: () => void;
+  onUpdated: (p: ArtPost) => void;
+  onOpenAnime: (a: Anime) => void;
+  allAnime: Anime[];
+  onToast: (msg: string) => void;
+}) {
+  const [comments, setComments] = useState<ArtComment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [liked, setLiked] = useState<boolean>(() => LS.get<boolean>(`anical_art_liked_${post.id}`, false));
+  const [flagged, setFlagged] = useState<boolean>(() => LS.get<boolean>(`anical_art_flagged_${post.id}`, false));
+  const [optimisticLikes, setOptimisticLikes] = useState(post.likes);
+  const [nickname, setNickname] = useState<string>(() => LS.get<string>("anical_nickname", ""));
+  const [nickDraft, setNickDraft] = useState("");
+  const [pickingNick, setPickingNick] = useState(!LS.get<string>("anical_nickname", ""));
+  const avatarColor = nickname ? getAvatarColor(nickname) : OR;
+  const tagged = post.anime_id ? allAnime.find((a) => a.id === post.anime_id) : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchArtComments(post.id)
+      .then((c) => { if (!cancelled) setComments(c); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [post.id]);
+
+  const handleLike = async () => {
+    if (liked) return;
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+    setLiked(true);
+    LS.set(`anical_art_liked_${post.id}`, true);
+    setOptimisticLikes((n) => n + 1);
+    try {
+      await likeArtPost(post.id, post.likes);
+      onUpdated({ ...post, likes: post.likes + 1 });
+    } catch {}
+  };
+
+  const handleFlag = async () => {
+    if (flagged) return;
+    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
+    setFlagged(true);
+    LS.set(`anical_art_flagged_${post.id}`, true);
+    try {
+      await flagArtPost(post.id, post.flag_count);
+      onToast("Reported — thanks for keeping the community safe");
+    } catch {
+      onToast("Couldn't report — try again");
+    }
+  };
+
+  const confirmNick = () => {
+    const n = nickDraft.trim();
+    if (n.length < 2) return;
+    setNickname(n);
+    LS.set("anical_nickname", n);
+    setPickingNick(false);
+  };
+
+  const handleSend = async () => {
+    if (!draft.trim() || !nickname || sending) return;
+    setSending(true);
+    try {
+      const c = await submitArtComment({
+        art_id: post.id,
+        nickname,
+        avatar_color: avatarColor,
+        message: draft.trim(),
+      });
+      setComments((cs) => [...cs, c]);
+      setDraft("");
+      onUpdated({ ...post, comment_count: post.comment_count + 1 });
+      Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+    } catch {
+      onToast("Couldn't post comment");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <>
+      <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.92)", zIndex:300, animation:"fadeIn .25s ease-out", backdropFilter:"blur(8px)" } as React.CSSProperties} onClick={onClose}/>
+      <div role="dialog" aria-modal="true" aria-label="Art post"
+        style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"92vh", overflowY:"auto", zIndex:301, animation:"sheetUpScale .42s cubic-bezier(.2,.85,.2,1) both" } as React.CSSProperties}>
+        <div style={{ width:40, height:4, background:BD2, borderRadius:2, margin:"12px auto 0" }}/>
+
+        {/* Top bar with poster + close */}
+        <div style={{ padding:"14px 16px 12px", display:"flex", alignItems:"center", gap:10 }}>
+          <Avatar nickname={post.nickname} color={safeAvatarColor(post.avatar_color)} size={36}/>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:safeAvatarColor(post.avatar_color), letterSpacing:"-.05px" }}>{post.nickname}</div>
+            <div style={{ fontSize:10.5, color:MT2, marginTop:1 }}>{formatNewsAge(post.created_at)}</div>
+          </div>
+          {tagged && (
+            <button
+              onClick={() => { onClose(); setTimeout(() => onOpenAnime(tagged), 120); }}
+              style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"5px 10px", borderRadius:99, background:OR2, border:`1px solid ${OR3}`, color:OR, fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit", maxWidth:140, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const } as React.CSSProperties}
+            >
+              <Icon name="starFilled" size={10} color={OR}/>
+              <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{tagged.title}</span>
+            </button>
+          )}
+          <button aria-label="Close" onClick={onClose} style={{ width:32, height:32, borderRadius:"50%", background:BG3, border:`1px solid ${BD}`, color:MT, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" } as React.CSSProperties}>
+            <Icon name="close" size={16} color={MT}/>
+          </button>
+        </div>
+
+        {/* Image */}
+        <div style={{ width:"100%", background:"#000", position:"relative", animation:"heroIn .45s cubic-bezier(.2,.7,.2,1) both" } as React.CSSProperties}>
+          <img src={post.image_url} alt={post.caption || "Anime fan art"} loading="eager" decoding="async"
+            style={{ width:"100%", maxHeight:"60vh", objectFit:"contain", display:"block" } as React.CSSProperties}/>
+        </div>
+
+        {/* Actions row */}
+        <div style={{ padding:"12px 18px 6px", display:"flex", alignItems:"center", gap:14 }}>
+          <button
+            aria-label={liked ? "Liked" : "Like"}
+            aria-pressed={liked}
+            onClick={handleLike}
+            style={{ display:"inline-flex", alignItems:"center", gap:6, background:"none", border:"none", color: liked ? OR : MT, cursor:"pointer", padding:0, fontFamily:"inherit", fontSize:14, fontWeight:700, transition:"transform .12s", transform: liked ? "scale(1.05)" : "scale(1)" } as React.CSSProperties}
+          >
+            <Icon name={liked ? "heartFilled" : "heart"} size={22} color={liked ? OR : MT}/>
+            <span>{optimisticLikes}</span>
+          </button>
+          <div style={{ display:"inline-flex", alignItems:"center", gap:6, color:MT, fontSize:14, fontWeight:700 }}>
+            <Icon name="community" size={22} color={MT}/>
+            <span>{post.comment_count + comments.length - (post.comment_count || 0)}</span>
+          </div>
+          <button
+            aria-label={flagged ? "Reported" : "Report this post"}
+            onClick={handleFlag}
+            disabled={flagged}
+            style={{ marginLeft:"auto", display:"inline-flex", alignItems:"center", gap:5, background:"none", border:"none", color: flagged ? MT2 : MT, cursor: flagged ? "default" : "pointer", padding:0, fontFamily:"inherit", fontSize:11.5, fontWeight:600 } as React.CSSProperties}
+          >
+            <Icon name="spoiler" size={14} color={flagged ? MT2 : MT}/>
+            <span>{flagged ? "Reported" : "Report"}</span>
+          </button>
+        </div>
+
+        {/* Caption */}
+        {post.caption && (
+          <div style={{ padding:"4px 18px 14px", fontSize:14, lineHeight:1.55, color:TX }}>
+            <span style={{ fontWeight:700, color:safeAvatarColor(post.avatar_color), marginRight:6 }}>{post.nickname}</span>
+            <span style={{ opacity:.9 }}>{post.caption}</span>
+          </div>
+        )}
+
+        {/* Comments */}
+        <div style={{ padding:"6px 18px 12px" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, fontSize:11, fontWeight:800, color:MT2, letterSpacing:".8px", textTransform:"uppercase" as const }}>
+            <Icon name="community" size={12} color={MT2}/>
+            <span>Comments</span>
+            {!loading && <span style={{ fontSize:10, padding:"1px 6px", borderRadius:99, background:BG3, border:`1px solid ${BD}`, color:MT }}>{comments.length}</span>}
+            <div style={{ flex:1, height:1, background:BD }}/>
+          </div>
+          {loading ? (
+            [0,1,2].map((i) => (
+              <div key={i} style={{ display:"flex", gap:10, padding:"8px 0" }}>
+                <div className="anical-skel" style={{ width:30, height:30, borderRadius:"50%", flexShrink:0 }}/>
+                <div style={{ flex:1, display:"flex", flexDirection:"column", gap:6 }}>
+                  <div className="anical-skel" style={{ height:10, borderRadius:4, width:"40%" }}/>
+                  <div className="anical-skel" style={{ height:10, borderRadius:4, width:"75%" }}/>
+                </div>
+              </div>
+            ))
+          ) : comments.length === 0 ? (
+            <div style={{ textAlign:"center" as const, padding:"22px 0", color:MT2, fontSize:12.5, lineHeight:1.5 }}>
+              No comments yet — be the first to say something.
+            </div>
+          ) : (
+            comments.map((c, i) => (
+              <div key={c.id} style={{ display:"flex", gap:10, padding:"10px 0", borderTop: i === 0 ? "none" : `1px solid ${BD}`, animation:`cardIn .3s ${Math.min(i*30, 200)}ms both` } as React.CSSProperties}>
+                <Avatar nickname={c.nickname} color={safeAvatarColor(c.avatar_color)} size={30}/>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", alignItems:"baseline", gap:6 }}>
+                    <span style={{ fontSize:12, fontWeight:700, color:safeAvatarColor(c.avatar_color) }}>{c.nickname}</span>
+                    <span style={{ fontSize:10, color:MT2 }}>{formatNewsAge(c.created_at)}</span>
+                  </div>
+                  <div style={{ fontSize:13, lineHeight:1.55, color:TX, marginTop:2, wordBreak:"break-word" as const }}>{c.message}</div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Composer / nickname prompt */}
+        <div style={{ padding:"12px 16px 20px", background:BG3, borderTop:`1px solid ${BD}`, position:"sticky", bottom:0 } as React.CSSProperties}>
+          {pickingNick ? (
+            <div>
+              <div style={{ fontSize:12, fontWeight:700, color:TX, marginBottom:6 }}>Pick a nickname to comment</div>
+              <div style={{ display:"flex", gap:6 }}>
+                <input
+                  value={nickDraft}
+                  onChange={(e) => setNickDraft(e.target.value.slice(0, 20))}
+                  placeholder="e.g. OtakuPrime"
+                  style={{ flex:1, background:BG2, border:`1px solid ${BD}`, borderRadius:10, padding:"9px 12px", color:TX, fontSize:13, fontFamily:"inherit", outline:"none" } as React.CSSProperties}
+                />
+                <button
+                  onClick={confirmNick}
+                  disabled={nickDraft.trim().length < 2}
+                  style={{ padding:"9px 16px", borderRadius:10, border:"none", background: nickDraft.trim().length >= 2 ? `linear-gradient(135deg, ${OR}, #cc5610)` : BG4, color: nickDraft.trim().length >= 2 ? "#fff" : MT2, fontSize:12, fontWeight:700, cursor: nickDraft.trim().length >= 2 ? "pointer" : "default", fontFamily:"inherit" } as React.CSSProperties}
+                >Save</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display:"flex", gap:8, alignItems:"flex-end" }}>
+              <Avatar nickname={nickname} color={avatarColor} size={32}/>
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value.slice(0, 500))}
+                placeholder="Add a comment…"
+                rows={1}
+                style={{ flex:1, background:BG2, border:`1px solid ${draft ? OR3 : BD}`, borderRadius:14, padding:"9px 12px", color:TX, fontSize:13, fontFamily:"inherit", resize:"none" as const, outline:"none", minHeight:38, maxHeight:120, lineHeight:1.45, transition:"border-color .2s" } as React.CSSProperties}
+              />
+              <button
+                onClick={handleSend}
+                disabled={!draft.trim() || sending}
+                style={{ flexShrink:0, padding:"9px 14px", borderRadius:14, border:"none", background: draft.trim() ? `linear-gradient(135deg, ${OR}, #cc5610)` : BG4, color: draft.trim() ? "#fff" : MT2, fontSize:12, fontWeight:800, cursor: draft.trim() ? "pointer" : "default", fontFamily:"inherit" } as React.CSSProperties}
+              >{sending ? "…" : "Post"}</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Art upload sheet ───────────────────────────────────────────────────────────
+function ArtUploadSheet({ open, onClose, allAnime, onUploaded, onToast }: {
+  open: boolean;
+  onClose: () => void;
+  allAnime: Anime[];
+  onUploaded: () => void;
+  onToast: (m: string) => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [caption, setCaption] = useState("");
+  const [animeQuery, setAnimeQuery] = useState("");
+  const [selectedAnime, setSelectedAnime] = useState<Anime | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [nickname, setNickname] = useState<string>(() => LS.get<string>("anical_nickname", ""));
+  const [nickDraft, setNickDraft] = useState("");
+  const [pickingNick, setPickingNick] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const avatarColor = nickname ? getAvatarColor(nickname) : OR;
+  const lastUploadAt = LS.get<number>("anical_last_art_upload", 0);
+  const minutesSinceLastUpload = (Date.now() - lastUploadAt) / 60_000;
+  const rateLimited = minutesSinceLastUpload < 5;
+
+  useEffect(() => {
+    if (!open) {
+      // Reset when sheet closes
+      setFile(null); setPreview(null); setCaption(""); setAnimeQuery(""); setSelectedAnime(null);
+      setSubmitting(false); setPickingNick(false); setNickDraft("");
+    }
+  }, [open]);
+
+  const animeSuggestions = useMemo(() => {
+    const q = animeQuery.trim().toLowerCase();
+    if (!q) return [];
+    return allAnime.filter((a) => a.title.toLowerCase().includes(q)).slice(0, 5);
+  }, [animeQuery, allAnime]);
+
+  const onPickFile = () => inputRef.current?.click();
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith("image/")) {
+      onToast("Pick an image file");
+      return;
+    }
+    if (f.size > 12 * 1024 * 1024) {
+      onToast("Image must be smaller than 12 MB");
+      return;
+    }
+    setFile(f);
+    const url = URL.createObjectURL(f);
+    setPreview(url);
+  };
+
+  const confirmNick = () => {
+    const n = nickDraft.trim();
+    if (n.length < 2) return;
+    setNickname(n);
+    LS.set("anical_nickname", n);
+    setPickingNick(false);
+  };
+
+  const handleSubmit = async () => {
+    if (!nickname) { setPickingNick(true); return; }
+    if (!file) { onToast("Pick an image first"); return; }
+    if (rateLimited) { onToast(`Wait ${Math.ceil(5 - minutesSinceLastUpload)} more min before posting again`); return; }
+    setSubmitting(true);
+    try {
+      const compressed = await compressImage(file);
+      const { url, path } = await uploadArtImage(compressed);
+      await submitArtPost({
+        anime_id: selectedAnime?.id ?? null,
+        anime_title: selectedAnime?.title ?? null,
+        nickname,
+        avatar_color: avatarColor,
+        image_url: url,
+        storage_path: path,
+        caption: caption.trim().slice(0, 500),
+      });
+      LS.set("anical_last_art_upload", Date.now());
+      Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
+      onToast("Submitted! Your post will appear once approved 🎨");
+      onUploaded();
+      onClose();
+    } catch (err: any) {
+      onToast(err?.message || "Upload failed");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <>
+      <div onClick={onClose}
+        style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.85)", zIndex:400, animation:"fadeIn .22s ease-out", backdropFilter:"blur(8px)" } as React.CSSProperties}/>
+      <div role="dialog" aria-modal="true" aria-label="Share your art"
+        style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"92vh", overflowY:"auto", zIndex:401, animation:"sheetUpScale .4s cubic-bezier(.2,.85,.2,1) both" } as React.CSSProperties}>
+        <div style={{ width:40, height:4, background:BD2, borderRadius:2, margin:"12px auto 0" }}/>
+
+        {/* Header */}
+        <div style={{ padding:"14px 22px 10px", display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:36, height:36, borderRadius:10, background:`linear-gradient(135deg, ${OR}, #cc5610)`, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <Icon name="upcoming" size={18} color="#fff"/>
+          </div>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:18, fontWeight:900, color:TX, letterSpacing:"-.4px" }}>Share your art</div>
+            <div style={{ fontSize:11, color:MT, marginTop:1 }}>Fan art, drawings, edits — show the community</div>
+          </div>
+          <button aria-label="Close" onClick={onClose} style={{ width:32, height:32, borderRadius:"50%", background:BG3, border:`1px solid ${BD}`, color:MT, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer" } as React.CSSProperties}>
+            <Icon name="close" size={16} color={MT}/>
+          </button>
+        </div>
+
+        <div style={{ padding:"6px 22px 36px" }}>
+          {/* Image picker / preview */}
+          <input ref={inputRef} type="file" accept="image/*" onChange={onFileChange} style={{ display:"none" }}/>
+          {preview ? (
+            <div style={{ position:"relative", marginBottom:14, borderRadius:14, overflow:"hidden", background:"#000" }}>
+              <img src={preview} alt="Preview" style={{ width:"100%", maxHeight:380, objectFit:"contain", display:"block" } as React.CSSProperties}/>
+              <button aria-label="Change image" onClick={onPickFile}
+                style={{ position:"absolute", bottom:10, right:10, padding:"7px 12px", borderRadius:99, border:"1px solid rgba(255,255,255,.2)", background:"rgba(0,0,0,.65)", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit", backdropFilter:"blur(8px)" } as React.CSSProperties}>Change</button>
+            </div>
+          ) : (
+            <button onClick={onPickFile}
+              style={{ width:"100%", padding:"40px 20px", borderRadius:14, border:`2px dashed ${BD2}`, background:BG3, color:MT, fontFamily:"inherit", display:"flex", flexDirection:"column" as const, alignItems:"center", gap:10, cursor:"pointer", marginBottom:14, transition:"border-color .2s" } as React.CSSProperties}>
+              <div style={{ width:54, height:54, borderRadius:14, background:`linear-gradient(135deg, ${OR}, #cc5610)`, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 4px 14px rgba(255,107,26,.35)` } as React.CSSProperties}>
+                <Icon name="upcoming" size={24} color="#fff"/>
+              </div>
+              <div style={{ fontSize:13.5, fontWeight:800, color:TX }}>Pick an image</div>
+              <div style={{ fontSize:11, color:MT2, textAlign:"center" as const, lineHeight:1.55 }}>JPEG, PNG or WebP · up to 12 MB<br/>Compressed automatically before upload</div>
+            </button>
+          )}
+
+          {/* Anime tag */}
+          <div style={{ marginBottom:14 }}>
+            <label style={{ fontSize:11, fontWeight:800, color:MT, letterSpacing:".5px", textTransform:"uppercase" as const, marginBottom:6, display:"block" }}>Tag an anime (optional)</label>
+            {selectedAnime ? (
+              <div style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 12px", background:OR2, border:`1px solid ${OR3}`, borderRadius:12 }}>
+                {selectedAnime.image_url && <img src={selectedAnime.image_url} alt="" style={{ width:32, height:32, borderRadius:6, objectFit:"cover" } as React.CSSProperties}/>}
+                <div style={{ flex:1, minWidth:0, fontSize:13, fontWeight:700, color:OR, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{selectedAnime.title}</div>
+                <button onClick={() => { setSelectedAnime(null); setAnimeQuery(""); }} aria-label="Remove tag"
+                  style={{ background:"transparent", border:"none", color:OR, cursor:"pointer", padding:4, display:"flex" }}>
+                  <Icon name="close" size={14} color={OR}/>
+                </button>
+              </div>
+            ) : (
+              <div style={{ position:"relative" }}>
+                <input
+                  value={animeQuery}
+                  onChange={(e) => setAnimeQuery(e.target.value)}
+                  placeholder="Search anime…"
+                  style={{ width:"100%", background:BG3, border:`1px solid ${BD}`, borderRadius:12, padding:"10px 12px", color:TX, fontSize:13, fontFamily:"inherit", outline:"none", boxSizing:"border-box" as const } as React.CSSProperties}
+                />
+                {animeSuggestions.length > 0 && (
+                  <div style={{ position:"absolute", top:"100%", left:0, right:0, marginTop:4, background:BG3, border:`1px solid ${BD}`, borderRadius:12, overflow:"hidden", zIndex:1, maxHeight:220, overflowY:"auto" } as React.CSSProperties}>
+                    {animeSuggestions.map((a) => (
+                      <button key={a.id} onClick={() => { setSelectedAnime(a); setAnimeQuery(""); }}
+                        style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px", width:"100%", background:"transparent", border:"none", borderBottom:`1px solid ${BD}`, cursor:"pointer", fontFamily:"inherit", textAlign:"left" as const, color:TX } as React.CSSProperties}>
+                        {a.image_url ? <img src={a.image_url} alt="" style={{ width:28, height:28, borderRadius:5, objectFit:"cover" }}/> : <div style={{ width:28, height:28, borderRadius:5, background:BG4 }}/>}
+                        <span style={{ fontSize:12.5, color:TX, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{a.title}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Caption */}
+          <div style={{ marginBottom:14 }}>
+            <label style={{ fontSize:11, fontWeight:800, color:MT, letterSpacing:".5px", textTransform:"uppercase" as const, marginBottom:6, display:"block" }}>Caption</label>
+            <textarea
+              value={caption}
+              onChange={(e) => setCaption(e.target.value.slice(0, 500))}
+              placeholder="Tell us about your art…"
+              rows={3}
+              style={{ width:"100%", background:BG3, border:`1px solid ${BD}`, borderRadius:12, padding:"10px 12px", color:TX, fontSize:13, fontFamily:"inherit", resize:"vertical" as const, outline:"none", minHeight:78, maxHeight:200, lineHeight:1.55, boxSizing:"border-box" as const } as React.CSSProperties}
+            />
+            <div style={{ textAlign:"right" as const, fontSize:10, color:MT2, marginTop:2 }}>{caption.length} / 500</div>
+          </div>
+
+          {/* Guidelines */}
+          <div style={{ padding:"10px 12px", borderRadius:12, background:"rgba(139,92,246,.08)", border:"1px solid rgba(139,92,246,.25)", marginBottom:14, fontSize:11, color:MT, lineHeight:1.6 }}>
+            <strong style={{ color:"rgba(167,139,250,1)", fontWeight:800 }}>Community guidelines:</strong> only your own art or properly attributed fan art. No NSFW, hate speech, or unrelated content. Posts are reviewed before appearing. Violations get hidden after 3 reports.
+          </div>
+
+          {/* Nickname prompt or submit */}
+          {pickingNick ? (
+            <div>
+              <div style={{ fontSize:12, fontWeight:700, color:TX, marginBottom:6 }}>Pick a nickname (shown on your posts)</div>
+              <div style={{ display:"flex", gap:6 }}>
+                <input
+                  value={nickDraft}
+                  onChange={(e) => setNickDraft(e.target.value.slice(0, 20))}
+                  placeholder="e.g. OtakuPrime"
+                  style={{ flex:1, background:BG3, border:`1px solid ${BD}`, borderRadius:12, padding:"10px 12px", color:TX, fontSize:13, fontFamily:"inherit", outline:"none" } as React.CSSProperties}
+                />
+                <button
+                  onClick={confirmNick}
+                  disabled={nickDraft.trim().length < 2}
+                  style={{ padding:"10px 16px", borderRadius:12, border:"none", background: nickDraft.trim().length >= 2 ? `linear-gradient(135deg, ${OR}, #cc5610)` : BG4, color: nickDraft.trim().length >= 2 ? "#fff" : MT2, fontSize:13, fontWeight:800, cursor: nickDraft.trim().length >= 2 ? "pointer" : "default", fontFamily:"inherit" } as React.CSSProperties}
+                >Save</button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || !file || rateLimited}
+              style={{ width:"100%", padding:"14px 18px", borderRadius:14, border:"none", background: (file && !submitting && !rateLimited) ? `linear-gradient(135deg, ${OR}, #cc5610)` : BG4, color: (file && !submitting && !rateLimited) ? "#fff" : MT2, fontSize:14.5, fontWeight:800, cursor: (file && !submitting && !rateLimited) ? "pointer" : "default", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow: (file && !submitting && !rateLimited) ? `0 8px 24px -6px rgba(255,107,26,.5)` : "none" } as React.CSSProperties}
+            >
+              {submitting ? "Uploading…" : rateLimited ? `Wait ${Math.ceil(5 - minutesSinceLastUpload)} min` : "Post art for review"}
+            </button>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Art feed view ──────────────────────────────────────────────────────────────
+function ArtView({ allAnime, onOpenAnime, onToast }: { allAnime: Anime[]; onOpenAnime: (a: Anime) => void; onToast: (m: string) => void }) {
+  const [posts, setPosts] = useState<ArtPost[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activePost, setActivePost] = useState<ArtPost | null>(null);
+  const [showUpload, setShowUpload] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const p = await fetchArtPosts();
+      setPosts(p);
+    } catch (e: any) {
+      // Detect "table doesn't exist" so we can show a friendly setup notice
+      const msg = e?.message || "";
+      if (msg.includes("404") || msg.includes("relation") || msg.includes("does not exist")) {
+        setError("setup");
+      } else {
+        setError("network");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handlePostUpdated = (updated: ArtPost) => {
+    setPosts((all) => all.map((p) => p.id === updated.id ? updated : p));
+    setActivePost(updated);
+  };
+
+  return (
+    <div style={{ padding:"4px 16px 24px" }}>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", padding:"8px 0 14px" }}>
+        <div>
+          <div style={{ fontSize:18, fontWeight:900, letterSpacing:"-.4px", color:TX }}>Art feed</div>
+          <div style={{ fontSize:11.5, color:MT, marginTop:2 }}>Fan art, edits & illustrations from the community</div>
+        </div>
+        <div style={{ display:"flex", gap:6 }}>
+          <button aria-label="Refresh art" onClick={load}
+            style={{ background:BG3, border:`1px solid ${BD}`, color:MT, borderRadius:10, padding:"8px 11px", cursor:"pointer", display:"flex", alignItems:"center" } as React.CSSProperties}>
+            <Icon name="refresh" size={14} color={MT}/>
+          </button>
+          <button aria-label="Share your art" onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setShowUpload(true); }}
+            style={{ background:`linear-gradient(135deg, ${OR}, #cc5610)`, border:"none", color:"#fff", borderRadius:10, padding:"8px 14px", cursor:"pointer", display:"flex", alignItems:"center", gap:5, fontFamily:"inherit", fontSize:12.5, fontWeight:800, boxShadow:`0 4px 14px -2px rgba(255,107,26,.45)` } as React.CSSProperties}>
+            <Icon name="upcoming" size={14} color="#fff"/>
+            <span>Post art</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      {loading ? (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:6 }}>
+          {[0,1,2,3,4,5].map((i) => <div key={i} className="anical-skel" style={{ aspectRatio:"1", borderRadius:10 }}/>)}
+        </div>
+      ) : error === "setup" ? (
+        <div style={{ padding:"32px 22px", textAlign:"center" as const, background:"rgba(139,92,246,.06)", border:"1px solid rgba(139,92,246,.28)", borderRadius:18 } as React.CSSProperties}>
+          <div style={{ width:64, height:64, borderRadius:"50%", background:"rgba(139,92,246,.15)", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px" } as React.CSSProperties}>
+            <Icon name="settings" size={28} color="rgba(167,139,250,1)"/>
+          </div>
+          <div style={{ fontSize:16, fontWeight:800, color:TX, marginBottom:6 }}>Art feed setup pending</div>
+          <div style={{ fontSize:12.5, color:MT, lineHeight:1.65, maxWidth:300, margin:"0 auto 10px" }}>
+            The art tables haven't been created in Supabase yet. The developer needs to run the one-time migration to enable this feature.
+          </div>
+        </div>
+      ) : error === "network" ? (
+        <div style={{ textAlign:"center" as const, padding:"40px 20px", color:MT }}>
+          <Icon name="bellOff" size={42} color={MT2}/>
+          <div style={{ fontSize:14, fontWeight:700, color:TX, marginTop:10, marginBottom:6 }}>Couldn't load art</div>
+          <button onClick={load} style={{ marginTop:8, padding:"8px 18px", borderRadius:99, background:BG3, border:`1px solid ${BD}`, color:OR, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" } as React.CSSProperties}>Try again</button>
+        </div>
+      ) : posts.length === 0 ? (
+        <div style={{ padding:"36px 20px", textAlign:"center" as const, background:`linear-gradient(145deg, ${BG2}, ${BG3})`, border:`1px solid ${BD}`, borderRadius:18 } as React.CSSProperties}>
+          <div style={{ width:64, height:64, borderRadius:"50%", background:OR2, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px", border:`1px solid ${OR3}` } as React.CSSProperties}>
+            <Icon name="upcoming" size={28} color={OR}/>
+          </div>
+          <div style={{ fontSize:16, fontWeight:800, color:TX, marginBottom:6 }}>Be the first</div>
+          <div style={{ fontSize:12.5, color:MT, lineHeight:1.65, maxWidth:280, margin:"0 auto 16px" }}>
+            No approved posts yet. Share your fan art and start the gallery.
+          </div>
+          <button onClick={() => setShowUpload(true)}
+            style={{ padding:"10px 20px", borderRadius:99, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:13, fontWeight:800, cursor:"pointer", fontFamily:"inherit", boxShadow:`0 6px 18px -4px rgba(255,107,26,.5)` } as React.CSSProperties}>
+            Post the first art
+          </button>
+        </div>
+      ) : (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:6 }}>
+          {posts.map((p, i) => (
+            <button key={p.id}
+              onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setActivePost(p); }}
+              aria-label={`View art by ${p.nickname}${p.anime_title ? `, tagged ${p.anime_title}` : ""}`}
+              style={{ position:"relative", padding:0, border:`1px solid ${BD}`, borderRadius:10, background:BG3, cursor:"pointer", overflow:"hidden", aspectRatio:"1", animation:`cardIn .35s ${Math.min(i*30, 400)}ms both` } as React.CSSProperties}>
+              <img src={p.image_url} alt={p.caption || "Fan art"} loading="lazy" decoding="async"
+                style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" } as React.CSSProperties}/>
+              <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, transparent 55%, rgba(0,0,0,.78))" }}/>
+              <div style={{ position:"absolute", bottom:6, left:8, right:8, display:"flex", alignItems:"center", gap:6, fontSize:11, fontWeight:700, color:"#fff" }}>
+                <Icon name="heartFilled" size={11} color="#fff"/>
+                <span>{p.likes}</span>
+                <Icon name="community" size={11} color="#fff" strokeWidth={2.2}/>
+                <span>{p.comment_count}</span>
+                {p.anime_title && <span style={{ marginLeft:"auto", maxWidth:90, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const, fontSize:9.5, opacity:.9 }}>{p.anime_title}</span>}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {activePost && (
+        <ArtPostSheet post={activePost} onClose={() => setActivePost(null)} onUpdated={handlePostUpdated}
+          onOpenAnime={onOpenAnime} allAnime={allAnime} onToast={onToast}/>
+      )}
+      <ArtUploadSheet open={showUpload} onClose={() => setShowUpload(false)} allAnime={allAnime} onUploaded={load} onToast={onToast}/>
+    </div>
+  );
+}
+
 // ── Community view ─────────────────────────────────────────────────────────────
-function CommunityView({ favAnime, allAnime, onOpenCommunity }: { favAnime: Anime[]; allAnime: Anime[]; onOpenCommunity: (a: Anime) => void }) {
+function CommunityView({ favAnime, allAnime, onOpenCommunity, onOpenAnime, onToast }: { favAnime: Anime[]; allAnime: Anime[]; onOpenCommunity: (a: Anime) => void; onOpenAnime: (a: Anime) => void; onToast: (m: string) => void }) {
+  const [subView, setSubView] = useState<"discussions" | "art">(() => LS.get<"discussions" | "art">("anical_community_sub", "discussions"));
+  useEffect(() => { LS.set("anical_community_sub", subView); }, [subView]);
+  return (
+    <div>
+      {/* Sub-tabs */}
+      <div style={{ display:"flex", gap:6, padding:"10px 16px 8px" }}>
+        {([
+          { id: "discussions" as const, icon: "community" as const, label: "Discussions" },
+          { id: "art" as const, icon: "upcoming" as const, label: "Art" },
+        ]).map((t) => {
+          const active = subView === t.id;
+          return (
+            <button
+              key={t.id}
+              aria-pressed={active}
+              onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setSubView(t.id); }}
+              style={{ flex:1, padding:"10px 14px", borderRadius:12, border:`1px solid ${active ? OR : BD}`, background: active ? OR2 : BG3, color: active ? OR : MT, fontSize:13, fontWeight:800, cursor:"pointer", fontFamily:"inherit", display:"inline-flex", alignItems:"center", justifyContent:"center", gap:7, transition:"all .18s", boxShadow: active ? `0 4px 14px -4px rgba(255,107,26,.35)` : "none" } as React.CSSProperties}
+            >
+              <Icon name={t.icon} size={15} color={active ? OR : MT}/>
+              <span>{t.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Active sub-view */}
+      <div key={subView} style={{ animation:"viewIn .25s cubic-bezier(.2,.7,.2,1) both" } as React.CSSProperties}>
+        {subView === "discussions"
+          ? <DiscussionsView favAnime={favAnime} allAnime={allAnime} onOpenCommunity={onOpenCommunity}/>
+          : <ArtView allAnime={allAnime} onOpenAnime={onOpenAnime} onToast={onToast}/>}
+      </div>
+    </div>
+  );
+}
+
+// ── Discussions view (extracted from old CommunityView) ────────────────────────
+function DiscussionsView({ favAnime, allAnime, onOpenCommunity }: { favAnime: Anime[]; allAnime: Anime[]; onOpenCommunity: (a: Anime) => void }) {
   const [threads, setThreads] = useState<CommunityThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -3510,7 +4266,10 @@ export default function AniCal() {
                 />
               )}
               {view === "community" && (
-                <CommunityView favAnime={favAnime} allAnime={allAnime} onOpenCommunity={(a) => setCommunityAnime(a)}/>
+                <CommunityView favAnime={favAnime} allAnime={allAnime}
+                  onOpenCommunity={(a) => setCommunityAnime(a)}
+                  onOpenAnime={(a) => setDetailAnime(a)}
+                  onToast={showToast}/>
               )}
               {view === "news" && (
                 <NewsView favAnime={favAnime} noSpoiler={noSpoiler}/>
