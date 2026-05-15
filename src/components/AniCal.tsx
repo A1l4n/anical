@@ -10,6 +10,18 @@ function openUrl(url: string) {
   window.open(url, IS_NATIVE ? "_system" : "_blank");
 }
 
+function openCrunchyroll(title: string) {
+  const web = `https://www.crunchyroll.com/search?q=${encodeURIComponent(title)}`;
+  if (IS_NATIVE) {
+    // Try the Crunchyroll app first (Android intent); if not installed, falls back to browser
+    const fallback = encodeURIComponent(web);
+    const intent = `intent://search?q=${encodeURIComponent(title)}#Intent;scheme=crunchyroll;package=com.crunchyroll.crunchyroid;S.browser_fallback_url=${fallback};end`;
+    window.open(intent, "_system");
+  } else {
+    window.open(web, "_blank");
+  }
+}
+
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] as const;
@@ -713,7 +725,7 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, 
                 <span>💬</span><span>Community</span>
               </button>
             </div>
-            <button style={{ width:"100%", padding:13, borderRadius:10, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:6, boxShadow:`0 6px 20px -4px rgba(255,107,26,.5)` }} onClick={() => openUrl(`https://www.crunchyroll.com/search?q=${encodeURIComponent(anime.title)}`)}>
+            <button style={{ width:"100%", padding:13, borderRadius:10, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:6, boxShadow:`0 6px 20px -4px rgba(255,107,26,.5)` }} onClick={() => openCrunchyroll(anime.title)}>
               ▶ Watch on Crunchyroll
             </button>
           </div>
@@ -1975,8 +1987,9 @@ function BottomNav({ view, setView, favCount }: { view: string; setView: (v: "sc
 
 // ── Pull indicator ─────────────────────────────────────────────────────────────
 function PullIndicator({ visible, spinning }: { visible: boolean; spinning: boolean }) {
+  const show = visible || spinning;
   return (
-    <div style={{ position:"fixed", top:66, left:"50%", transform:`translateX(-50%) translateY(${visible || spinning ? 0 : -64}px) scale(${visible || spinning ? 1 : 0.6})`, transition:"transform .3s cubic-bezier(.2,.7,.2,1)", zIndex:60, width:36, height:36, borderRadius:"50%", background:`linear-gradient(135deg, ${OR}, #cc5610)`, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 4px 20px rgba(255,107,26,.5)` }}>
+    <div style={{ position:"fixed", top:66, left:"50%", transform:`translateX(-50%) translateY(${show ? 0 : -120}px) scale(${show ? 1 : 0.5})`, opacity: show ? 1 : 0, pointerEvents:"none", transition:"transform .3s cubic-bezier(.2,.7,.2,1), opacity .25s", zIndex:60, width:36, height:36, borderRadius:"50%", background:`linear-gradient(135deg, ${OR}, #cc5610)`, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 4px 20px rgba(255,107,26,.5)` }}>
       <span style={{ fontSize:18, color:"#fff", lineHeight:1, display:"block", animation: spinning ? "spin .65s linear infinite" : "none" }}>↻</span>
     </div>
   );
