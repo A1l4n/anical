@@ -216,19 +216,34 @@ function getDeviceTz(): string {
 
 function capitalize(s?: string | null) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ""; }
 
-function jstToLocal(jstTime?: string | null, tz?: string): string | null {
+// MAL/Jikan returns the Japanese TV broadcast time. Crunchyroll, Hidive etc.
+// usually release simulcasts 30-90 minutes after. We expose a configurable
+// offset (stored in LS) so users can match their preferred platform's delay.
+function getStreamOffsetMin(): number {
+  return LS.get<number>("anical_stream_offset_min", 0);
+}
+
+const STREAM_OFFSET_OPTIONS: { label: string; minutes: number; description: string }[] = [
+  { label: "Japan TV",        minutes:  0,  description: "MAL broadcast time as-is" },
+  { label: "Crunchyroll ~30", minutes: 30,  description: "Typical Crunchyroll simulcast delay" },
+  { label: "Crunchyroll ~60", minutes: 60,  description: "Longer Crunchyroll delay" },
+  { label: "Hidive / +90",    minutes: 90,  description: "Hidive & some others" },
+  { label: "Next day",        minutes: 1440, description: "When the show drops next day in your region" },
+];
+
+function jstToLocal(jstTime?: string | null, tz?: string, offsetMin: number = getStreamOffsetMin()): string | null {
   if (!jstTime) return null;
   try {
     const [h, m] = jstTime.split(":").map(Number);
     const now = new Date();
-    const utcMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h - 9, m);
+    const utcMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h - 9, m) + offsetMin * 60_000;
     const opts: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", hour12: true };
     if (tz && tz !== "auto") opts.timeZone = tz;
     return new Date(utcMs).toLocaleTimeString([], opts);
   } catch { return null; }
 }
 
-function nextJstAiringDate(broadcastDay?: string | null, broadcastTime?: string | null): Date | null {
+function nextJstAiringDate(broadcastDay?: string | null, broadcastTime?: string | null, offsetMin: number = getStreamOffsetMin()): Date | null {
   if (!broadcastDay || !broadcastTime) return null;
   const dayIdx = DAYS.indexOf(broadcastDay.toLowerCase() as typeof DAYS[number]);
   if (dayIdx < 0) return null;
@@ -239,8 +254,8 @@ function nextJstAiringDate(broadcastDay?: string | null, broadcastTime?: string 
   const [jY, jMo, jD] = [jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate()];
   const ourDow = (jstNow.getUTCDay() + 6) % 7;
   const diff = (dayIdx - ourDow + 7) % 7;
-  let cand = new Date(Date.UTC(jY, jMo, jD + diff, h - 9, m));
-  if (cand.getTime() <= now.getTime() + 60_000) cand = new Date(Date.UTC(jY, jMo, jD + diff + 7, h - 9, m));
+  let cand = new Date(Date.UTC(jY, jMo, jD + diff, h - 9, m) + offsetMin * 60_000);
+  if (cand.getTime() <= now.getTime() + 60_000) cand = new Date(Date.UTC(jY, jMo, jD + diff + 7, h - 9, m) + offsetMin * 60_000);
   return cand;
 }
 
@@ -749,7 +764,7 @@ function AnimeCard({ anime, favorites, onOpen, onToggleFav, tz, animDelay = 0, t
         </div>
         {anime.broadcast_time && (
           <div style={{ fontSize:11, color:MT2, display:"flex", alignItems:"center", gap:4, marginTop:1 }}>
-            <span>{anime.broadcast_time} JST</span>
+            <span>{anime.broadcast_time} JP</span>
             {localTime && <><span style={{ opacity:.4 }}>·</span><span style={{ color:OR, fontWeight:600 }}>{localTime}</span></>}
           </div>
         )}
@@ -800,41 +815,182 @@ function HeroCover({ imageUrl }: { imageUrl?: string | null }) {
   );
 }
 
-// Hook: fetches Jikan trailer YouTube ID for the anime on demand.
-// Returns null when no relevant trailer is available (or noSpoiler is on).
-function useAnimeTrailer(animeId: number, noSpoiler: boolean): string | null {
-  const [ytId, setYtId] = useState<string | null>(null);
+// Hook: fetches Jikan trailer YouTube ID + full synopsis for the anime on demand.
+// Single request serves both pieces of data. Trailer is suppressed for older anime
+// or when noSpoiler is on; synopsis is always fetched (it's not a spoiler).
+type AnimeExtras = { trailerYtId: string | null; fullSynopsis: string | null; loading: boolean };
+function useAnimeTrailer(animeId: number, noSpoiler: boolean): AnimeExtras {
+  const [extras, setExtras] = useState<AnimeExtras>({ trailerYtId: null, fullSynopsis: null, loading: true });
   useEffect(() => {
-    if (noSpoiler) { setYtId(null); return; }
+    if (!animeId) { setExtras({ trailerYtId: null, fullSynopsis: null, loading: false }); return; }
     let cancelled = false;
     fetch(`https://api.jikan.moe/v4/anime/${animeId}`, { signal: AbortSignal.timeout(8000) })
       .then((r) => r.json())
       .then((j) => {
         if (cancelled) return;
-        const currentYear = new Date().getFullYear();
-        const isRelevant =
-          j.data?.airing === true ||
-          (j.data?.year != null && j.data.year >= currentYear - 1);
-        if (!isRelevant) { setYtId(null); return; }
-        const id: string | null =
-          j.data?.trailer?.youtube_id ||
-          j.data?.trailer?.embed_url?.match(/embed\/([^?&]+)/)?.[1] ||
-          null;
-        setYtId(id);
+        const fullSynopsis: string | null = j.data?.synopsis ?? null;
+        let trailerYtId: string | null = null;
+        if (!noSpoiler) {
+          const currentYear = new Date().getFullYear();
+          const isRelevant =
+            j.data?.airing === true ||
+            (j.data?.year != null && j.data.year >= currentYear - 1);
+          if (isRelevant) {
+            trailerYtId =
+              j.data?.trailer?.youtube_id ||
+              j.data?.trailer?.embed_url?.match(/embed\/([^?&]+)/)?.[1] ||
+              null;
+          }
+        }
+        setExtras({ trailerYtId, fullSynopsis, loading: false });
       })
-      .catch(() => { if (!cancelled) setYtId(null); });
+      .catch(() => { if (!cancelled) setExtras((s) => ({ ...s, loading: false })); });
     return () => { cancelled = true; };
   }, [animeId, noSpoiler]);
-  return ytId;
+  return extras;
+}
+
+// Hook: fetches Jikan news for an anime. Used in the detail sheet to surface
+// "Latest news" without the user having to jump to the News tab.
+function useAnimeNews(anime: { id: number; title: string } | null): { news: NewsItem[]; loading: boolean } {
+  const [state, setState] = useState<{ news: NewsItem[]; loading: boolean }>({ news: [], loading: true });
+  const id = anime?.id;
+  useEffect(() => {
+    if (!id || !anime) { setState({ news: [], loading: false }); return; }
+    let cancelled = false;
+    const cacheKey = `anical_news_${id}`;
+    const cached = LS.get<{ ts: number; data: NewsItem[] } | null>(cacheKey, null);
+    if (cached && Date.now() - cached.ts < NEWS_TTL) {
+      setState({ news: cached.data, loading: false });
+      return;
+    }
+    fetchAnimeNewsItems(anime as Anime)
+      .then((items) => {
+        if (cancelled) return;
+        setState({ news: items, loading: false });
+        LS.set(cacheKey, { ts: Date.now(), data: items });
+      })
+      .catch(() => { if (!cancelled) setState({ news: [], loading: false }); });
+    return () => { cancelled = true; };
+  }, [id, anime]);
+  return state;
+}
+
+// ── Synopsis block (expandable) ────────────────────────────────────────────────
+// Full synopses can be quite long. Show the first ~280 chars by default and
+// reveal the rest on tap so the detail sheet doesn't become a wall of text.
+function SynopsisBlock({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const COLLAPSED_CHARS = 280;
+  const needsTruncation = text.length > COLLAPSED_CHARS + 40;
+  const display = expanded || !needsTruncation ? text : text.slice(0, COLLAPSED_CHARS).trimEnd() + "…";
+  return (
+    <div style={{ marginBottom:16 }}>
+      <div style={{ fontSize:11, fontWeight:800, color:MT2, letterSpacing:".8px", textTransform:"uppercase" as const, marginBottom:6 }}>About</div>
+      <p style={{ fontSize:13.5, lineHeight:1.7, color:TX, opacity:.85, margin:0, whiteSpace:"pre-wrap" as const, letterSpacing:".05px" }}>{display}</p>
+      {needsTruncation && (
+        <button
+          onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setExpanded((v) => !v); }}
+          style={{ marginTop:8, padding:0, background:"none", border:"none", color:OR, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"inline-flex", alignItems:"center", gap:4 }}
+        >
+          <span>{expanded ? "Show less" : "Read more"}</span>
+          <Icon name={expanded ? "chevronUp" : "chevronDown"} size={12} color={OR}/>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Anime news section (inside detail sheet) ──────────────────────────────────
+// Shows up to 3 recent news items for the anime. Tapping a row opens the article
+// externally. Keeps the user engaged without bouncing them out of the detail flow.
+function AnimeNewsSection({ anime, news, loading }: { anime: Anime; news: NewsItem[]; loading: boolean }) {
+  // Hide the whole section if we're done loading and have nothing useful
+  if (!loading && news.length === 0) return null;
+  const visible = news.slice(0, 3);
+  return (
+    <div style={{ marginBottom:18 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontSize:11, fontWeight:800, color:MT2, letterSpacing:".8px", textTransform:"uppercase" as const }}>
+        <Icon name="news" size={13} color={MT2} strokeWidth={2.1}/>
+        <span>Latest News</span>
+        {!loading && <span style={{ fontSize:10, padding:"1px 7px", borderRadius:99, background:BG3, border:`1px solid ${BD}`, color:MT }}>{news.length}</span>}
+        <div style={{ flex:1, height:1, background:BD }}/>
+      </div>
+      {loading ? (
+        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+          {[0,1].map((i) => (
+            <div key={i} style={{ display:"flex", gap:10, padding:10, background:BG3, border:`1px solid ${BD}`, borderRadius:12 }}>
+              <div className="anical-skel" style={{ width:56, height:56, borderRadius:8, flexShrink:0 }}/>
+              <div style={{ flex:1, display:"flex", flexDirection:"column", gap:6, justifyContent:"center" }}>
+                <div className="anical-skel" style={{ height:11, borderRadius:4, width:"85%" }}/>
+                <div className="anical-skel" style={{ height:9, borderRadius:4, width:"50%" }}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <>
+          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            {visible.map((n, i) => {
+              const age = formatNewsAge(n.date);
+              return (
+                <button
+                  key={n.id}
+                  aria-label={`Read: ${n.title}`}
+                  onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); openUrl(n.url); }}
+                  style={{
+                    display:"flex", alignItems:"center", gap:10, padding:10,
+                    background:BG3, border:`1px solid ${BD}`, borderRadius:12,
+                    cursor:"pointer", textAlign:"left" as const, fontFamily:"inherit", color:TX,
+                    animation:`cardIn .35s ${i*40}ms cubic-bezier(.2,.7,.2,1) both`,
+                    transition:"transform .12s, border-color .2s",
+                  } as React.CSSProperties}
+                >
+                  {n.imageUrl ? (
+                    <img src={n.imageUrl} alt="" loading="lazy" decoding="async"
+                      style={{ width:56, height:56, borderRadius:8, objectFit:"cover", flexShrink:0, background:BG4 } as React.CSSProperties}/>
+                  ) : (
+                    <div style={{ width:56, height:56, borderRadius:8, background:BG4, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color:MT2 }}>
+                      <Icon name="news" size={22} color={MT2}/>
+                    </div>
+                  )}
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:12.5, fontWeight:700, color:TX, lineHeight:1.35, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, marginBottom:3 }}>{n.title}</div>
+                    <div style={{ fontSize:10.5, color:MT2, display:"inline-flex", alignItems:"center", gap:5 }}>
+                      <span style={{ fontSize:8.5, fontWeight:800, padding:"1px 5px", borderRadius:3, background:OR2, color:OR, border:`1px solid ${OR3}`, textTransform:"uppercase" as const, letterSpacing:".4px" }}>{n.source}</span>
+                      {age && <span>· {age}</span>}
+                    </div>
+                  </div>
+                  <Icon name="chevronRight" size={14} color={MT2}/>
+                </button>
+              );
+            })}
+          </div>
+          {news.length > 3 && (
+            <button
+              onClick={() => openUrl(`https://myanimelist.net/anime/${anime.id}/news`)}
+              style={{ marginTop:8, padding:"7px 0", background:"none", border:"none", color:MT, fontSize:11.5, fontWeight:700, cursor:"pointer", fontFamily:"inherit", display:"inline-flex", alignItems:"center", gap:4 }}
+            >
+              <span>View all {news.length} articles on MAL</span>
+              <Icon name="external" size={11} color={MT}/>
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 // ── Detail sheet ───────────────────────────────────────────────────────────────
 function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, noSpoiler, tz, onToast }: { anime: Anime | null; favorites: number[]; onClose: () => void; onToggleFav: (id: number) => void; onOpenCommunity: (a: Anime) => void; noSpoiler: boolean; tz: string; onToast: (m: string) => void }) {
   // Hooks must run unconditionally — provide a safe fallback id
-  const trailerYtId = useAnimeTrailer(anime?.id ?? 0, noSpoiler);
+  const { trailerYtId, fullSynopsis } = useAnimeTrailer(anime?.id ?? 0, noSpoiler);
+  const { news: animeNews, loading: newsLoading } = useAnimeNews(anime);
   if (!anime) return null;
   const isFav = favorites.includes(anime.id);
   const localTime = jstToLocal(anime.broadcast_time, tz);
+  // Prefer the full synopsis fetched from /anime/{id}; fall back to the truncated one
+  const displaySynopsis = fullSynopsis || anime.synopsis || "No synopsis available.";
   const handleShare = async () => {
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
     const r = await shareAnime(anime);
@@ -861,16 +1017,35 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, 
           </div>
           {anime.broadcast_time && (
             <div style={{ background:BG3, border:`1px solid ${BD}`, borderRadius:10, padding:"12px 14px", marginBottom:12 }}>
-              <div style={{ fontSize:11, fontWeight:700, color:MT, textTransform:"uppercase", letterSpacing:".6px", marginBottom:6 }}>📅 Airing Time</div>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:MT, textTransform:"uppercase", letterSpacing:".6px", display:"inline-flex", alignItems:"center", gap:5 }}>
+                  <Icon name="clock" size={12} color={MT}/>
+                  <span>Airing Time</span>
+                </div>
+                {getStreamOffsetMin() > 0 && (
+                  <span style={{ fontSize:9.5, fontWeight:800, padding:"2px 7px", borderRadius:99, background:OR2, color:OR, border:`1px solid ${OR3}`, letterSpacing:".3px" }}>+{getStreamOffsetMin()}m offset</span>
+                )}
+              </div>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}><div style={{ fontSize:16, fontWeight:700 }}>{anime.broadcast_time}</div><div style={{ fontSize:10, color:MT }}>Japan (JST)</div></div>
+                <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}><div style={{ fontSize:16, fontWeight:700 }}>{anime.broadcast_time}</div><div style={{ fontSize:10, color:MT }}>Japan TV</div></div>
                 <div style={{ color:MT, fontSize:22 }}>→</div>
                 <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}><div style={{ fontSize:16, fontWeight:700, color:OR }}>{localTime || "—"}</div><div style={{ fontSize:10, color:MT }}>Your time</div></div>
                 <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}><div style={{ fontSize:14, fontWeight:700 }}>{capitalize(anime.broadcast_day || "")}</div><div style={{ fontSize:10, color:MT }}>Day</div></div>
               </div>
+              {getStreamOffsetMin() === 0 && (
+                <div style={{ marginTop:8, fontSize:10.5, color:MT2, lineHeight:1.5, paddingTop:8, borderTop:`1px dashed ${BD}` }}>
+                  Times shown are the Japanese TV broadcast. Crunchyroll & other simulcasts usually publish 30–60 min later — adjust in <strong style={{ color:OR, fontWeight:700 }}>Settings → Streaming offset</strong>.
+                </div>
+              )}
             </div>
           )}
-          <div style={{ fontSize:13, lineHeight:1.65, color:MT, marginBottom:16 }}>{anime.synopsis || "No synopsis available."}</div>
+          {/* Synopsis — uses the FULL synopsis fetched from /anime/{id} when available,
+              falls back to the truncated one stored in the schedule cache. */}
+          <SynopsisBlock text={displaySynopsis}/>
+
+          {/* Latest news for this anime — pulled from Jikan; only shown when we have results */}
+          <AnimeNewsSection anime={anime} news={animeNews} loading={newsLoading}/>
+
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             <div style={{ display:"flex", gap:8 }}>
               <button aria-label={isFav ? "Remove from favorites" : "Add to favorites"} style={{ flex:1, padding:12, borderRadius:10, border:`1px solid ${isFav ? OR : BD}`, background: isFav ? OR2 : BG3, color: isFav ? OR : MT, fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }} onClick={() => onToggleFav(anime.id)}>
@@ -1201,7 +1376,7 @@ function CommunitySheet({ anime, onClose }: { anime: Anime; onClose: () => void 
 }
 
 // ── Schedule view ──────────────────────────────────────────────────────────────
-function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavRef, schedule, favs, favFilter, search, tz, onOpen, onToggleFav, tick, topGenres, genreFilter, setGenreFilter }: {
+function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavRef, schedule, favs, favFilter, search, tz, onOpen, onToggleFav, tick, topGenres, genreFilter, setGenreFilter, ratingFilter, setRatingFilter, streamOffsetMin }: {
   anime: Anime[];
   selectedDay: number;
   setSelectedDay: (d: number) => void;
@@ -1218,7 +1393,11 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
   topGenres: string[];
   genreFilter: string | null;
   setGenreFilter: (g: string | null) => void;
+  ratingFilter: number;
+  setRatingFilter: (n: number) => void;
+  streamOffsetMin: number;
 }) {
+  void streamOffsetMin; // referenced so the prop is part of the deps tree even though the cards re-read it via getStreamOffsetMin()
   const today = new Date();
   const swipeStartX = useRef(0);
   const swipeStartY = useRef(0);
@@ -1226,6 +1405,8 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
   const getCount = (i: number) => {
     let list = schedule[DAYS[i]] || [];
     if (favFilter) list = list.filter((a) => favs.includes(a.id));
+    if (genreFilter) list = list.filter((a) => (a.genres || []).includes(genreFilter));
+    if (ratingFilter > 0) list = list.filter((a) => (a.score ?? 0) >= ratingFilter);
     if (search) { const q = search.toLowerCase(); list = list.filter((a) => a.title.toLowerCase().includes(q)); }
     return list.length;
   };
@@ -1304,6 +1485,27 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
         </div>
       )}
 
+      {/* Rating filter chips — MAL score threshold */}
+      <div style={{ display:"flex", gap:6, padding:"0 16px 10px", overflowX:"auto", scrollbarWidth:"none", alignItems:"center" } as React.CSSProperties}>
+        <span style={{ flexShrink:0, fontSize:10, fontWeight:800, color:MT2, letterSpacing:".6px", textTransform:"uppercase" as const, marginRight:2 }}>Rating</span>
+        {([0, 7, 8, 9] as const).map((threshold) => {
+          const active = ratingFilter === threshold;
+          const label = threshold === 0 ? "All" : `${threshold}+`;
+          return (
+            <button
+              key={threshold}
+              aria-label={threshold === 0 ? "Show all ratings" : `Show anime rated ${threshold} or higher`}
+              aria-pressed={active}
+              onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setRatingFilter(threshold); }}
+              style={{ flexShrink:0, padding:"6px 12px", borderRadius:99, border:`1px solid ${active ? OR : BD}`, background: active ? OR2 : BG3, color: active ? OR : MT, fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit", letterSpacing:".2px", transition:"all .15s", display:"inline-flex", alignItems:"center", gap:4 } as React.CSSProperties}
+            >
+              {threshold > 0 && <Icon name="starFilled" size={11} color={active ? OR : MT}/>}
+              <span>{label}</span>
+            </button>
+          );
+        })}
+      </div>
+
       <div
         style={{ padding:"0 16px 16px", touchAction:"pan-y" } as React.CSSProperties}
         onTouchStart={onTouchStart}
@@ -1311,11 +1513,17 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
       >
         {anime.length === 0 ? (
           <div style={{ textAlign:"center", padding:"48px 20px", color:MT, display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
-            <div style={{ fontSize:40 }}>{favFilter ? "⭐" : genreFilter ? "🔎" : "📭"}</div>
-            <div style={{ fontSize:14, lineHeight:1.5, whiteSpace:"pre-line" }}>{favFilter ? "No favorites airing.\nTurn off filter to see all." : genreFilter ? `No ${genreFilter} anime\nairing this day.` : "Nothing scheduled."}</div>
-            {(favFilter || genreFilter) && (
+            <div style={{ fontSize:40 }}>{favFilter ? "⭐" : (genreFilter || ratingFilter > 0) ? "🔎" : "📭"}</div>
+            <div style={{ fontSize:14, lineHeight:1.5, whiteSpace:"pre-line" }}>
+              {favFilter ? "No favorites airing.\nTurn off filter to see all."
+                : ratingFilter > 0 && genreFilter ? `No ${genreFilter} anime\nrated ${ratingFilter}+ airing this day.`
+                : ratingFilter > 0 ? `No anime rated ${ratingFilter}+\nairing this day.`
+                : genreFilter ? `No ${genreFilter} anime\nairing this day.`
+                : "Nothing scheduled."}
+            </div>
+            {(favFilter || genreFilter || ratingFilter > 0) && (
               <button
-                onClick={() => { setGenreFilter(null); }}
+                onClick={() => { setGenreFilter(null); setRatingFilter(0); }}
                 style={{ marginTop:6, padding:"8px 18px", borderRadius:99, background:BG3, border:`1px solid ${BD}`, color:OR, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}
               >Clear filters</button>
             )}
@@ -1325,7 +1533,8 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
             let isNow = false, localStr: string | null = null;
             if (time !== "?") {
               const [h, m] = time.split(":").map(Number);
-              const utcMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h - 9, m);
+              const offsetMin = getStreamOffsetMin();
+              const utcMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h - 9, m) + offsetMin * 60_000;
               const diff = (utcMs - now.getTime()) / 60_000;
               isNow = selectedDay === todayDayIdx && diff > -30 && diff <= 0;
               const opts: Intl.DateTimeFormatOptions = { hour:"2-digit", minute:"2-digit", hour12:true };
@@ -1342,7 +1551,7 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
                     color: isNow ? GR : MT,
                     border:`1px solid ${isNow ? "rgba(34,197,94,.4)" : BD}`,
                   }}>
-                    {isNow ? "🟢 Live" : time !== "?" ? `${time} JST` : "Time unknown"}
+                    {isNow ? "🟢 Live" : time !== "?" ? `${time} JP` : "Time unknown"}
                   </span>
                   {!isNow && localStr && <span style={{ fontSize:10, color:OR, fontWeight:700, flexShrink:0 }}>→ {localStr}</span>}
                   <div style={{ flex:1, height:1, background:BD }}/>
@@ -1363,13 +1572,15 @@ function ScheduleView({ anime, selectedDay, setSelectedDay, todayDayIdx, dayNavR
 // Redesigned: no more confusing month calendar grid. Just a clean season
 // countdown banner + filterable card grid of announced shows, with optional
 // "Next season" preview.
-function MonthView({ schedule: _schedule, favs: _favs, onOpenCommunity }: {
+function MonthView({ schedule: _schedule, favs: _favs, onOpen }: {
   // monthOffset / setMonthOffset kept for prop-compat with parent; unused
   monthOffset?: number;
   setMonthOffset?: (fn: (v: number) => number) => void;
   schedule: Schedule;
   favs: number[];
-  onOpenCommunity: (a: Anime) => void;
+  // Opens the rich detail sheet (synopsis + trailer + news + community link)
+  // instead of jumping straight to the community thread
+  onOpen: (a: Anime) => void;
 }) {
   void _schedule; void _favs;
   const now = new Date();
@@ -1557,8 +1768,8 @@ function MonthView({ schedule: _schedule, favs: _favs, onOpenCommunity }: {
                   return (
                     <button
                       key={a.id}
-                      aria-label={`${a.title} — open community`}
-                      onClick={() => onOpenCommunity({ id:a.id, title:a.title, image_url:a.imageUrl ?? null, genres:a.genres, episodes:a.episodes, synopsis:a.synopsis, studios:a.studios, year:a.year, season:a.season, mal_url:a.mal_url ?? null })}
+                      aria-label={`Open details for ${a.title}`}
+                      onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); onOpen({ id:a.id, title:a.title, image_url:a.imageUrl ?? null, genres:a.genres, episodes:a.episodes, synopsis:a.synopsis, studios:a.studios, year:a.year, season:a.season, mal_url:a.mal_url ?? null }); }}
                       style={{
                         position:"relative", overflow:"hidden",
                         background: starred ? `rgba(255,107,26,.07)` : BG2,
@@ -2565,7 +2776,7 @@ function BottomNav({ view, setView, favCount, hideCommunity }: { view: string; s
 // ── Settings sheet ─────────────────────────────────────────────────────────────
 // Opens from the header gear. Houses all global preferences in one place so the
 // header stays uncluttered and My List stops being a junk-drawer for settings.
-function SettingsSheet({ open, onClose, dark, setDark, noSpoiler, setNoSpoiler, hideCommunity, setHideCommunity, onShowOnboarding }: {
+function SettingsSheet({ open, onClose, dark, setDark, noSpoiler, setNoSpoiler, hideCommunity, setHideCommunity, streamOffsetMin, setStreamOffsetMin, onShowOnboarding }: {
   open: boolean;
   onClose: () => void;
   dark: boolean;
@@ -2574,6 +2785,8 @@ function SettingsSheet({ open, onClose, dark, setDark, noSpoiler, setNoSpoiler, 
   setNoSpoiler: (fn: (v: boolean) => boolean) => void;
   hideCommunity: boolean;
   setHideCommunity: (fn: (v: boolean) => boolean) => void;
+  streamOffsetMin: number;
+  setStreamOffsetMin: (n: number) => void;
   onShowOnboarding: () => void;
 }) {
   if (!open) return null;
@@ -2640,6 +2853,44 @@ function SettingsSheet({ open, onClose, dark, setDark, noSpoiler, setNoSpoiler, 
               toggleLabel="Toggle no-spoiler"
               last
             />
+          </div>
+
+          {/* Schedule */}
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, fontSize:11, fontWeight:700, color:MT2, textTransform:"uppercase" as const, letterSpacing:".8px" }}>
+            <Icon name="clock" size={12} color={MT2}/>
+            <span>Schedule</span>
+          </div>
+          <div style={{ background:BG2, border:`1px solid ${BD}`, borderRadius:14, padding:"14px 16px", marginBottom:8 }}>
+            <div style={{ display:"flex", alignItems:"flex-start", gap:14, marginBottom:12 }}>
+              <div style={{ width:36, height:36, borderRadius:10, background:BG3, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, color: streamOffsetMin > 0 ? OR : MT }}>
+                <Icon name="clock" size={18} color={streamOffsetMin > 0 ? OR : MT}/>
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:13.5, fontWeight:700, color:TX, letterSpacing:"-.05px" }}>Streaming offset</div>
+                <div style={{ fontSize:11, color:MT, marginTop:2, lineHeight:1.5 }}>
+                  MAL airing times are the Japanese TV broadcast. Crunchyroll & friends usually publish later — shift the times to match your platform.
+                </div>
+              </div>
+            </div>
+            <div style={{ display:"flex", flexWrap:"wrap" as const, gap:6 }}>
+              {STREAM_OFFSET_OPTIONS.map((opt) => {
+                const active = streamOffsetMin === opt.minutes;
+                return (
+                  <button
+                    key={opt.minutes}
+                    aria-pressed={active}
+                    aria-label={`${opt.label}: ${opt.description}`}
+                    onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); setStreamOffsetMin(opt.minutes); }}
+                    style={{ padding:"7px 12px", borderRadius:99, border:`1px solid ${active ? OR : BD}`, background: active ? OR2 : BG3, color: active ? OR : MT, fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit", letterSpacing:".2px", transition:"all .15s" } as React.CSSProperties}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ fontSize:10.5, color:MT2, marginBottom:18, paddingLeft:4, lineHeight:1.5 }}>
+            {streamOffsetMin === 0 ? "Showing Japan TV broadcast times." : `All times shifted +${streamOffsetMin} min from Japan TV.`}
           </div>
 
           {/* Navigation */}
@@ -2827,6 +3078,8 @@ export default function AniCal() {
   });
   const [noSpoiler, setNoSpoiler] = useState<boolean>(() => LS.get<boolean>("anical_no_spoiler", false));
   const [hideCommunity, setHideCommunity] = useState<boolean>(() => LS.get<boolean>("anical_hide_community", false));
+  const [streamOffsetMin, setStreamOffsetMin] = useState<number>(() => LS.get<number>("anical_stream_offset_min", 0));
+  const [ratingFilter, setRatingFilter] = useState<number>(0); // 0 = no filter; 7/8/9 = ≥ that score
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => !LS.get<boolean>("anical_onboarded_v1", false));
   const [showSettings, setShowSettings] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -2873,6 +3126,7 @@ export default function AniCal() {
     // If the user hides Community while they're on that tab, send them to Schedule
     if (hideCommunity && view === "community") setView("schedule");
   }, [hideCommunity, view]);
+  useEffect(() => { LS.set("anical_stream_offset_min", streamOffsetMin); }, [streamOffsetMin]);
 
   // ── Init ──
   useEffect(() => { notif.getPermission().then((p) => setNotifPerm(p as any)); }, []);
@@ -3020,9 +3274,10 @@ export default function AniCal() {
     let list = (schedule[DAYS[dayIdx]] || []).filter((a) => { if (seen.has(a.id)) return false; seen.add(a.id); return true; });
     if (favFilter) list = list.filter((a) => favs.includes(a.id));
     if (genreFilter) list = list.filter((a) => (a.genres || []).includes(genreFilter));
+    if (ratingFilter > 0) list = list.filter((a) => (a.score ?? 0) >= ratingFilter);
     if (search) { const q = search.toLowerCase(); list = list.filter((a) => a.title.toLowerCase().includes(q)); }
     return list.sort((a, b) => (a.broadcast_time || "").localeCompare(b.broadcast_time || ""));
-  }, [schedule, favFilter, genreFilter, search, favs]);
+  }, [schedule, favFilter, genreFilter, ratingFilter, search, favs]);
 
   // Top genres across the whole week — used for filter chips
   const topGenres = useMemo(() => {
@@ -3242,13 +3497,16 @@ export default function AniCal() {
                   topGenres={topGenres}
                   genreFilter={genreFilter}
                   setGenreFilter={setGenreFilter}
+                  ratingFilter={ratingFilter}
+                  setRatingFilter={setRatingFilter}
+                  streamOffsetMin={streamOffsetMin}
                 />
               )}
               {view === "month" && (
                 <MonthView
                   schedule={schedule}
                   favs={favs}
-                  onOpenCommunity={(a) => { setCommunityAnime(a); }}
+                  onOpen={(a) => setDetailAnime(a)}
                 />
               )}
               {view === "community" && (
@@ -3280,6 +3538,7 @@ export default function AniCal() {
             dark={dark} setDark={setDark}
             noSpoiler={noSpoiler} setNoSpoiler={setNoSpoiler}
             hideCommunity={hideCommunity} setHideCommunity={setHideCommunity}
+            streamOffsetMin={streamOffsetMin} setStreamOffsetMin={setStreamOffsetMin}
             onShowOnboarding={() => setShowOnboarding(true)}
           />
 
