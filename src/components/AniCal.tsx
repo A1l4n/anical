@@ -2243,11 +2243,15 @@ function MonthView({ schedule: _schedule, favs: _favs, onOpen }: {
               <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:10 }}>
                 {items.map((a, i) => {
                   const starred = upcomingStars.includes(a.id);
+                  const openDetails = () => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); onOpen({ id:a.id, title:a.title, image_url:a.imageUrl ?? null, genres:a.genres, episodes:a.episodes, synopsis:a.synopsis, studios:a.studios, year:a.year, season:a.season, mal_url:a.mal_url ?? null }); };
                   return (
-                    <button
+                    <div
                       key={a.id}
+                      role="button"
+                      tabIndex={0}
                       aria-label={`Open details for ${a.title}`}
-                      onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); onOpen({ id:a.id, title:a.title, image_url:a.imageUrl ?? null, genres:a.genres, episodes:a.episodes, synopsis:a.synopsis, studios:a.studios, year:a.year, season:a.season, mal_url:a.mal_url ?? null }); }}
+                      onClick={openDetails}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetails(); } }}
                       style={{
                         position:"relative", overflow:"hidden",
                         background: starred ? `rgba(255,107,26,.07)` : BG2,
@@ -2297,7 +2301,7 @@ function MonthView({ schedule: _schedule, favs: _favs, onOpen }: {
                           <div style={{ marginTop:4, fontSize:10, color:MT, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{a.studios[0]}</div>
                         )}
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -4299,7 +4303,11 @@ export default function AniCal() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<"schedule"|"month"|"community"|"news"|"stats">("schedule");
   const [selectedDay, setSelectedDay] = useState(todayDayIdx);
-  const [favs, setFavs] = useState<number[]>([]);
+  // Lazy-init from LS so we never race the "save" effect with the empty default.
+  // Previous pattern (`useState([])` + a `useEffect` loader) had a subtle race:
+  // the save effect runs once with `[]` and wipes localStorage before the
+  // loader's setFavs ever flushes.
+  const [favs, setFavs] = useState<number[]>(() => LS.get<number[]>("anical_favs", []));
   const [favFilter, setFavFilter] = useState(false);
   const [search, setSearch] = useState("");
   const [genreFilter, setGenreFilter] = useState<string | null>(null);
@@ -4320,7 +4328,7 @@ export default function AniCal() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [installPrompt, setInstallPrompt] = useState<any>(null);
   const tz = "auto";
-  const [notifSettings, setNotifSettings] = useState<NotifSettings>(DEFAULT_NOTIF);
+  const [notifSettings, setNotifSettings] = useState<NotifSettings>(() => LS.get<NotifSettings>("anical_notif", DEFAULT_NOTIF));
   const [notifPerm, setNotifPerm] = useState<"granted"|"denied"|"default"|"unsupported">("default");
   const [tick, setTick] = useState(0);
   const [pullVisible, setPullVisible] = useState(false);
@@ -4347,9 +4355,10 @@ export default function AniCal() {
   }, []);
 
   // ── Persistence ──
-  useEffect(() => { setFavs(LS.get<number[]>("anical_favs", [])); }, []);
+  // (Favs are now lazy-initialized from LS at useState declaration above; this
+  // mount-time loader effect is no longer needed.)
   useEffect(() => { LS.set("anical_favs", favs); }, [favs]);
-  useEffect(() => { setNotifSettings(LS.get<NotifSettings>("anical_notif", DEFAULT_NOTIF)); }, []);
+  // (notifSettings are now lazy-initialized from LS at useState declaration above.)
   useEffect(() => { LS.set("anical_notif", notifSettings); }, [notifSettings]);
   useEffect(() => {
     document.documentElement.classList.toggle("light", !dark);
