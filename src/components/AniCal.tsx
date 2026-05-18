@@ -3,6 +3,27 @@ import { Capacitor } from "@capacitor/core";
 import { Haptics, ImpactStyle } from "@capacitor/haptics";
 import * as notif from "@/lib/notifications";
 import type { ScheduleEntry } from "@/lib/notifications";
+import {
+  useAnimeEpisodes,
+  getWatchedEpisodes,
+  markEpisodeWatched,
+  markEpisodeUnwatched,
+  getProgress,
+  getNextUnwatched,
+  isLastEpisode,
+  isEpisodeSpoiler,
+  isShieldActive,
+  getSpoilerShieldOverride,
+  setSpoilerShieldOverride,
+  type ShieldOverride,
+  type Episode,
+} from "@/lib/episodeTracking";
+import {
+  getCrunchyrollStoreLink,
+  getCDJapanLink,
+  getMangaPlusLink,
+  AFFILIATE_DISCLAIMER,
+} from "@/lib/affiliates";
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -1125,11 +1146,304 @@ function AnimeNewsSection({ anime, news, loading }: { anime: Anime; news: NewsIt
   );
 }
 
+// ── Episode list (inside detail sheet) ─────────────────────────────────────────
+// Renders an interactive episode list with watched checkboxes, progress bar,
+// Continue Watching shortcut, and a per-anime spoiler shield override. Fires
+// `onFinale` callback when the user marks the last episode watched, which the
+// parent uses to surface the merch/affiliate celebration modal.
+function EpisodeList({ animeId, totalEps, noSpoiler, onFinale }: {
+  animeId: number;
+  totalEps: number | null | undefined;
+  noSpoiler: boolean;
+  onFinale: () => void;
+}) {
+  const { episodes, loading, error, refetch } = useAnimeEpisodes(animeId);
+  // Re-render trigger for watched state (LS is read on every render so a tick is enough)
+  const [, setNudge] = useState(0);
+  const bump = () => setNudge((n) => n + 1);
+
+  // Per-row "revealed" overrides so a tap on a shielded row can flash the title
+  const [revealed, setRevealed] = useState<Record<number, boolean>>({});
+  // Local override that mirrors LS so toggling re-renders this component
+  const [override, setOverrideState] = useState<ShieldOverride>(() => getSpoilerShieldOverride(animeId));
+  const [shieldMenuOpen, setShieldMenuOpen] = useState(false);
+  useEffect(() => { setOverrideState(getSpoilerShieldOverride(animeId)); }, [animeId]);
+  const shieldOn = override === "on" || (override !== "off" && noSpoiler);
+
+  const watched = getWatchedEpisodes(animeId);
+  const watchedSet = new Set(watched);
+
+  // Trust Jikan's list length when available — it can disagree with anime.episodes
+  // for ongoing/long-running shows where the count is still updating.
+  const effectiveTotal = episodes.length > 0 ? Math.max(episodes.length, totalEps ?? 0) : (totalEps ?? 0);
+  const progress = getProgress(animeId, effectiveTotal);
+  const nextUp = getNextUnwatched(animeId, effectiveTotal);
+  const allDone = effectiveTotal > 0 && progress.watched >= effectiveTotal;
+
+  const scrollerRef = useRef<HTMLDivElement>(null);
+
+  const toggle = (epNumber: number) => {
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+    if (watchedSet.has(epNumber)) {
+      markEpisodeUnwatched(animeId, epNumber);
+    } else {
+      markEpisodeWatched(animeId, epNumber);
+      // Fire finale callback when this was the last episode
+      if (isLastEpisode(epNumber, effectiveTotal)) {
+        // Defer so the UI updates first, then the modal flies in
+        setTimeout(onFinale, 220);
+      }
+    }
+    bump();
+  };
+
+  const continueWatching = () => {
+    if (!nextUp || !scrollerRef.current) return;
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+    const el = scrollerRef.current.querySelector(`[data-ep="${nextUp}"]`) as HTMLElement | null;
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.style.outline = `2px solid ${OR}`;
+      el.style.outlineOffset = "2px";
+      setTimeout(() => { el.style.outline = ""; el.style.outlineOffset = ""; }, 1500);
+    }
+  };
+
+  const setShield = (v: ShieldOverride) => {
+    setSpoilerShieldOverride(animeId, v);
+    setOverrideState(v);
+    setShieldMenuOpen(false);
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+  };
+
+  return (
+    <div style={{ marginBottom:18 }}>
+      {/* Header row */}
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontSize:11, fontWeight:800, color:MT2, letterSpacing:".8px", textTransform:"uppercase" as const }}>
+        <Icon name="play" size={12} color={MT2}/>
+        <span>Episodes</span>
+        {effectiveTotal > 0 && (
+          <span style={{ fontSize:10, padding:"1px 7px", borderRadius:99, background:BG3, border:`1px solid ${BD}`, color: progress.pct === 100 ? GR : MT }}>
+            {progress.watched} / {effectiveTotal}
+          </span>
+        )}
+        <div style={{ flex:1, height:1, background:BD }}/>
+        {/* Shield override pill */}
+        <div style={{ position:"relative" }}>
+          <button
+            aria-label="Spoiler shield options"
+            onClick={() => setShieldMenuOpen((v) => !v)}
+            style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"3px 8px", borderRadius:99, border:`1px solid ${shieldOn ? "rgba(139,92,246,.4)" : BD}`, background: shieldOn ? "rgba(139,92,246,.12)" : BG3, color: shieldOn ? "rgba(167,139,250,1)" : MT, cursor:"pointer", fontFamily:"inherit", fontSize:10, fontWeight:700 } as React.CSSProperties}
+          >
+            <Icon name={shieldOn ? "spoiler" : "eye"} size={11} color={shieldOn ? "rgba(167,139,250,1)" : MT}/>
+            <span>Shield</span>
+          </button>
+          {shieldMenuOpen && (
+            <>
+              <div onClick={() => setShieldMenuOpen(false)} style={{ position:"fixed", inset:0, zIndex:90 } as React.CSSProperties}/>
+              <div style={{ position:"absolute", top:"calc(100% + 6px)", right:0, zIndex:91, background:BG2, border:`1px solid ${BD2}`, borderRadius:12, minWidth:200, overflow:"hidden", boxShadow:"0 12px 32px -8px rgba(0,0,0,.5)" } as React.CSSProperties}>
+                {([
+                  { value: null,  label: "Follow global setting", hint: noSpoiler ? "Currently: on" : "Currently: off" },
+                  { value: "on" as const,    label: "Force ON",  hint: "Always hide future-episode titles" },
+                  { value: "off" as const,   label: "Force OFF", hint: "Show every title for this anime" },
+                ]).map((opt) => {
+                  const active = override === opt.value;
+                  return (
+                    <button
+                      key={String(opt.value)}
+                      onClick={() => setShield(opt.value)}
+                      style={{ width:"100%", padding:"10px 12px", background: active ? OR2 : "transparent", border:"none", borderBottom:`1px solid ${BD}`, color: active ? OR : TX, cursor:"pointer", fontFamily:"inherit", textAlign:"left" as const, display:"flex", flexDirection:"column" as const, gap:2 } as React.CSSProperties}
+                    >
+                      <span style={{ fontSize:12.5, fontWeight:700 }}>{opt.label}</span>
+                      <span style={{ fontSize:10.5, color:MT2 }}>{opt.hint}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Progress bar + Continue Watching */}
+      {effectiveTotal > 0 && (
+        <div style={{ marginBottom:12 }}>
+          <div style={{ height:6, borderRadius:99, background:BG3, overflow:"hidden", marginBottom:6 }}>
+            <div style={{ height:"100%", width:`${progress.pct}%`, background: progress.pct === 100 ? `linear-gradient(135deg, ${GR}, #16a34a)` : `linear-gradient(135deg, ${OR}, #cc5610)`, transition:"width .35s cubic-bezier(.2,.7,.2,1)" } as React.CSSProperties}/>
+          </div>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+            <span style={{ fontSize:11, color: allDone ? GR : MT, fontWeight:700 }}>
+              {allDone ? "All episodes watched 🎉" : `${progress.pct}% complete`}
+            </span>
+            {!allDone && nextUp != null && (
+              <button
+                onClick={continueWatching}
+                style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"5px 10px", borderRadius:99, border:`1px solid ${OR}`, background:OR2, color:OR, fontSize:11, fontWeight:800, cursor:"pointer", fontFamily:"inherit" } as React.CSSProperties}
+              >
+                <Icon name="play" size={11} color={OR}/>
+                <span>Continue · Ep {nextUp}</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Body */}
+      {loading ? (
+        <div style={{ display:"flex", flexDirection:"column" as const, gap:6 }}>
+          {[0,1,2,3].map((i) => (
+            <div key={i} className="anical-skel" style={{ height:48, borderRadius:10 }}/>
+          ))}
+        </div>
+      ) : error ? (
+        <div style={{ padding:"16px 14px", background:BG3, border:`1px solid ${BD}`, borderRadius:12, textAlign:"center" as const, color:MT, fontSize:12.5 }}>
+          <div style={{ marginBottom:8 }}>Couldn't load episodes — {error}</div>
+          <button onClick={refetch} style={{ padding:"6px 14px", borderRadius:99, background:BG2, border:`1px solid ${BD2}`, color:OR, fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit" } as React.CSSProperties}>Try again</button>
+        </div>
+      ) : episodes.length === 0 ? (
+        <div style={{ padding:"16px 14px", background:BG3, border:`1px solid ${BD}`, borderRadius:12, textAlign:"center" as const, color:MT2, fontSize:12.5 }}>
+          No episode info available yet — check back closer to airing.
+        </div>
+      ) : (
+        <div ref={scrollerRef} style={{ display:"flex", flexDirection:"column" as const, gap:4, maxHeight:360, overflowY:"auto", paddingRight:2 } as React.CSSProperties}>
+          {episodes.map((ep) => {
+            const isWatched = watchedSet.has(ep.number);
+            const shielded = isEpisodeSpoiler(animeId, ep.number, noSpoiler) && override !== "off";
+            const showShielded = shielded && !revealed[ep.number];
+            const epTitle = ep.title || ep.title_romanji || `Episode ${ep.number}`;
+            const airDate = ep.aired ? (() => { try { return new Date(ep.aired).toLocaleDateString([], { month:"short", day:"numeric", year:"numeric" }); } catch { return null; } })() : null;
+            const isNext = nextUp === ep.number;
+            return (
+              <div
+                key={ep.number}
+                data-ep={ep.number}
+                onClick={() => showShielded ? setRevealed((r) => ({ ...r, [ep.number]: true })) : null}
+                style={{
+                  display:"flex", alignItems:"center", gap:10,
+                  padding:"9px 11px",
+                  background: isWatched ? "rgba(34,197,94,.06)" : isNext ? OR2 : BG3,
+                  border:`1px solid ${isWatched ? "rgba(34,197,94,.28)" : isNext ? OR3 : BD}`,
+                  borderRadius:10,
+                  cursor: showShielded ? "pointer" : "default",
+                  transition:"background .15s, border-color .2s, outline .2s",
+                } as React.CSSProperties}
+              >
+                {/* Checkbox */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggle(ep.number); }}
+                  aria-label={isWatched ? `Unmark episode ${ep.number}` : `Mark episode ${ep.number} watched`}
+                  aria-pressed={isWatched}
+                  style={{ flexShrink:0, width:24, height:24, borderRadius:6, border:`1.5px solid ${isWatched ? GR : BD2}`, background: isWatched ? `linear-gradient(135deg, ${GR}, #16a34a)` : "transparent", display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontFamily:"inherit", padding:0, transition:"all .15s" } as React.CSSProperties}
+                >
+                  {isWatched && <Icon name="check" size={14} color="#fff" strokeWidth={2.6}/>}
+                </button>
+                {/* Number */}
+                <div style={{ flexShrink:0, width:32, textAlign:"center" as const, fontSize:11, fontWeight:800, color: isWatched ? GR : isNext ? OR : MT, letterSpacing:".4px" } as React.CSSProperties}>
+                  {String(ep.number).padStart(2, "0")}
+                </div>
+                {/* Title + meta */}
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:5, fontSize:12.5, fontWeight:600, color: isWatched ? MT : TX, lineHeight:1.35, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>
+                    {showShielded ? (
+                      <>
+                        <Icon name="eyeOff" size={11} color={MT2}/>
+                        <span style={{ color:MT2, fontStyle:"italic" as const }}>Episode {ep.number} — tap to reveal</span>
+                      </>
+                    ) : (
+                      <>
+                        <span style={{ overflow:"hidden", textOverflow:"ellipsis" as const }}>{epTitle}</span>
+                        {ep.filler && <span style={{ fontSize:9, fontWeight:800, padding:"1px 6px", borderRadius:4, background:BG4, color:MT, border:`1px solid ${BD}`, letterSpacing:".3px" }}>FILLER</span>}
+                        {ep.recap && <span style={{ fontSize:9, fontWeight:800, padding:"1px 6px", borderRadius:4, background:BG4, color:MT, border:`1px solid ${BD}`, letterSpacing:".3px" }}>RECAP</span>}
+                      </>
+                    )}
+                  </div>
+                  {airDate && !showShielded && (
+                    <div style={{ fontSize:10, color:MT2, marginTop:2 }}>{airDate}</div>
+                  )}
+                </div>
+                {isNext && !isWatched && !showShielded && (
+                  <span style={{ flexShrink:0, fontSize:9, fontWeight:800, padding:"2px 7px", borderRadius:99, background:OR, color:"#fff", letterSpacing:".4px" }}>NEXT</span>
+                )}
+              </div>
+            );
+          })}
+          {/* Pagination hint for very long shows */}
+          {episodes.length >= 100 && (
+            <div style={{ marginTop:6, padding:"8px 12px", background:BG2, border:`1px dashed ${BD2}`, borderRadius:10, fontSize:11, color:MT2, textAlign:"center" as const, lineHeight:1.5 } as React.CSSProperties}>
+              Showing first 100 episodes — more coming in a future update.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Finale modal ───────────────────────────────────────────────────────────────
+// Celebration screen when the user marks the last episode watched. Surfaces
+// affiliate merch and manga links in an emotional moment that converts well.
+function FinaleModal({ anime, onClose }: { anime: { id: number; title: string; image_url?: string | null }; onClose: () => void }) {
+  return (
+    <>
+      <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.86)", zIndex:550, animation:"fadeIn .25s ease-out", backdropFilter:"blur(8px)" } as React.CSSProperties}/>
+      <div role="dialog" aria-modal="true" aria-label={`You finished ${anime.title}`}
+        style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:480, background:BG2, borderRadius:"22px 22px 0 0", border:`1px solid ${BD}`, borderBottom:"none", maxHeight:"88vh", overflowY:"auto", zIndex:551, animation:"sheetUpScale .45s cubic-bezier(.2,.85,.2,1) both", paddingBottom:"calc(env(safe-area-inset-bottom, 0px) + 24px)" } as React.CSSProperties}>
+        <div style={{ width:40, height:4, background:BD2, borderRadius:2, margin:"12px auto 0" }}/>
+        <div style={{ padding:"18px 22px 8px", display:"flex", alignItems:"flex-end", gap:10 }}>
+          <button aria-label="Close" onClick={onClose} style={{ marginLeft:"auto", width:34, height:34, borderRadius:"50%", background:BG3, border:`1px solid ${BD}`, color:MT, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontFamily:"inherit" } as React.CSSProperties}>
+            <Icon name="close" size={16} color={MT}/>
+          </button>
+        </div>
+
+        {/* Hero */}
+        <div style={{ padding:"0 22px 6px", textAlign:"center" as const }}>
+          <div style={{ fontSize:54, lineHeight:1, marginBottom:10, animation:"popIn .4s cubic-bezier(.2,.85,.2,1)" } as React.CSSProperties}>🎉</div>
+          <h2 style={{ fontSize:22, fontWeight:900, color:TX, letterSpacing:"-.5px", margin:"0 0 6px", lineHeight:1.2 }}>You finished {anime.title}!</h2>
+          <p style={{ fontSize:13, color:MT, margin:0, lineHeight:1.6 }}>Relive the journey with official merch — or dive into the manga next.</p>
+        </div>
+
+        {/* Optional cover thumbnail */}
+        {anime.image_url && (
+          <div style={{ padding:"14px 22px 8px", display:"flex", justifyContent:"center" }}>
+            <div style={{ width:96, height:128, borderRadius:12, overflow:"hidden", background:BG4, boxShadow:`0 8px 28px -8px rgba(255,107,26,.4)`, border:`1px solid ${OR3}` } as React.CSSProperties}>
+              <img src={anime.image_url} alt={anime.title} style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" } as React.CSSProperties}/>
+            </div>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div style={{ padding:"18px 22px 12px", display:"flex", flexDirection:"column" as const, gap:8 } as React.CSSProperties}>
+          <button
+            onClick={() => { Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {}); openUrl(getCrunchyrollStoreLink(anime.title)); }}
+            style={{ width:"100%", padding:"14px 18px", borderRadius:14, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:8, boxShadow:`0 8px 24px -6px rgba(255,107,26,.5)` } as React.CSSProperties}
+          >
+            <span>🛍️</span>
+            <span>Shop the collection</span>
+          </button>
+          <button
+            onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); openUrl(getCDJapanLink(anime.title)); }}
+            style={{ width:"100%", padding:"13px 18px", borderRadius:14, border:`1px solid ${BD2}`, background:BG3, color:TX, fontSize:13.5, fontWeight:800, cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", justifyContent:"center", gap:8 } as React.CSSProperties}
+          >
+            <span>📖</span>
+            <span>Read the manga</span>
+          </button>
+        </div>
+
+        {/* Disclaimer */}
+        <div style={{ padding:"4px 26px 0", textAlign:"center" as const, fontSize:10.5, color:MT2, lineHeight:1.55 } as React.CSSProperties}>
+          {AFFILIATE_DISCLAIMER}
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ── Detail sheet ───────────────────────────────────────────────────────────────
 function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, noSpoiler, tz, onToast }: { anime: Anime | null; favorites: number[]; onClose: () => void; onToggleFav: (id: number) => void; onOpenCommunity: (a: Anime) => void; noSpoiler: boolean; tz: string; onToast: (m: string) => void }) {
   // Hooks must run unconditionally — provide a safe fallback id
   const { trailerYtId, fullSynopsis } = useAnimeTrailer(anime?.id ?? 0, noSpoiler);
   const { news: animeNews, loading: newsLoading } = useAnimeNews(anime);
+  const [finaleAnime, setFinaleAnime] = useState<{ id: number; title: string; image_url?: string | null } | null>(null);
   if (!anime) return null;
   const isFav = favorites.includes(anime.id);
   const localTime = jstToLocal(anime.broadcast_time, tz);
@@ -1189,6 +1503,14 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, 
 
           {/* Latest news for this anime — pulled from Jikan; only shown when we have results */}
           <AnimeNewsSection anime={anime} news={animeNews} loading={newsLoading}/>
+
+          {/* Episode tracker — checkboxes, progress, Continue Watching, spoiler shield */}
+          <EpisodeList
+            animeId={anime.id}
+            totalEps={anime.episodes ?? null}
+            noSpoiler={noSpoiler}
+            onFinale={() => setFinaleAnime({ id: anime.id, title: anime.title, image_url: anime.image_url })}
+          />
 
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             <div style={{ display:"flex", gap:8 }}>
@@ -1250,9 +1572,21 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, 
               <Icon name="external" size={12} color={MT}/>
               <span>More on YouTube</span>
             </button>
+            {/* Affiliate: read the manga */}
+            <button
+              aria-label="Read the manga"
+              onClick={() => { Haptics.impact({ style: ImpactStyle.Light }).catch(() => {}); openUrl(getMangaPlusLink(anime.title)); }}
+              style={{ width:"100%", padding:10, borderRadius:10, border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", marginTop:2, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}
+            >
+              <span>📖</span>
+              <span>Read the manga</span>
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Finale modal — opens when the user marks the last episode watched */}
+      {finaleAnime && <FinaleModal anime={finaleAnime} onClose={() => setFinaleAnime(null)}/>}
     </>
   );
 }
@@ -3345,6 +3679,9 @@ function FavCard({ anime, delay, tz, notifEnabled, perAnimeNotif, toggleAnimeNot
   const countdown = next ? formatCountdown(next, now) : null;
   const localTime = jstToLocal(anime.broadcast_time, tz);
   const dayLabel = anime.broadcast_day ? (DAY_SHORT[DAYS.indexOf(anime.broadcast_day as any)] || anime.broadcast_day.slice(0, 3)) : null;
+  // Episode progress (reads localStorage on every render — fine, it's fast and tick rerolls every 30s)
+  const totalEps: number = anime.episodes ?? 0;
+  const progress = totalEps > 0 ? getProgress(anime.id, totalEps) : null;
 
   const accentColor = isLive ? GR : isSoon ? OR : BD;
   const cardBg = isLive ? "rgba(34,197,94,.07)" : isSoon ? OR2 : BG2;
@@ -3378,8 +3715,18 @@ function FavCard({ anime, delay, tz, notifEnabled, perAnimeNotif, toggleAnimeNot
         {anime.broadcast_time && (
           <div style={{ fontSize:11, fontWeight:600, marginTop:8, display:"flex", alignItems:"center", gap:4 }}>
             <span style={{ color:OR, fontWeight:700 }}>{localTime}</span>
-            <span style={{ color:MT2 }}>· {anime.broadcast_time} JST</span>
+            <span style={{ color:MT2 }}>· {anime.broadcast_time} JP</span>
             {anime.episodes && <span style={{ color:MT2 }}>· {anime.episodes} eps</span>}
+          </div>
+        )}
+        {progress && progress.total > 0 && (
+          <div style={{ marginTop:8 }}>
+            <div style={{ height:3, borderRadius:99, background:BG3, overflow:"hidden", marginBottom:3 } as React.CSSProperties}>
+              <div style={{ height:"100%", width:`${progress.pct}%`, background: progress.pct === 100 ? `linear-gradient(135deg, ${GR}, #16a34a)` : `linear-gradient(135deg, ${OR}, #cc5610)`, transition:"width .35s cubic-bezier(.2,.7,.2,1)" } as React.CSSProperties}/>
+            </div>
+            <div style={{ fontSize:9.5, color: progress.pct === 100 ? GR : MT2, fontWeight:700, letterSpacing:".3px" }}>
+              {progress.watched}/{progress.total} eps{progress.pct === 100 ? " · completed" : ""}
+            </div>
           </div>
         )}
       </div>
