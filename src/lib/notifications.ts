@@ -146,19 +146,31 @@ export async function schedule(entries: ScheduleEntry[]): Promise<void> {
   }
 }
 
+// Standalone notification IDs are NEVER touched by cancelAll(), since they're
+// managed by separate schedulers (weekly vote opens, vote winner reveal, etc.).
+// Anyone calling cancelStandalone(id) is the only way to remove them.
+const PRESERVED_IDS = new Set<number>([
+  1_900_001, // VOTE_OPEN_NOTIF_ID
+  1_900_002, // VOTE_WINNER_NOTIF_ID
+]);
+
 export async function cancelAll(): Promise<void> {
   const n = await getNative();
   if (n) {
     const pending = await n.LocalNotifications.getPending();
-    if (pending.notifications.length > 0) {
+    const toCancel = pending.notifications.filter((p) => !PRESERVED_IDS.has(p.id));
+    if (toCancel.length > 0) {
       await n.LocalNotifications.cancel({
-        notifications: pending.notifications.map((p) => ({ id: p.id })),
+        notifications: toCancel.map((p) => ({ id: p.id })),
       });
     }
     return;
   }
-  for (const handle of webTimers.values()) window.clearTimeout(handle);
-  webTimers.clear();
+  for (const [id, handle] of webTimers.entries()) {
+    if (PRESERVED_IDS.has(id)) continue;
+    window.clearTimeout(handle);
+    webTimers.delete(id);
+  }
 }
 
 export async function testFire(title = "AniCal", body = "Notifications are working ✓"): Promise<void> {
@@ -173,4 +185,74 @@ export async function testFire(title = "AniCal", body = "Notifications are worki
   if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
     setTimeout(() => new Notification(title, { body, icon: "/icon-512.png" }), 1200);
   }
+}
+
+// ── Standalone one-off / recurring notifications ─────────────────────────────
+// The favorites schedule() function above is an "all or nothing" replace pattern
+// for episode-airing reminders. The functions below are separate so app-level
+// notifications (weekly vote opens, vote winner) won't get wiped on every
+// favorites refresh. IDs should be > 1_000_000 to avoid collision with MAL ids.
+
+export const VOTE_OPEN_NOTIF_ID = 1_900_001;
+export const VOTE_WINNER_NOTIF_ID = 1_900_002;
+
+export async function scheduleStandalone(opts: {
+  id: number;
+  title: string;
+  body: string;
+  fireAt: Date;
+  every?: "day" | "week" | "month";
+  url?: string;
+}): Promise<void> {
+  // Skip if in the past (more than 30s ago)
+  if (opts.fireAt.getTime() < Date.now() - 30_000) return;
+
+  const n = await getNative();
+  if (n) {
+    // Cancel any pre-existing schedule for this id (so we don't stack duplicates)
+    await n.LocalNotifications.cancel({ notifications: [{ id: opts.id }] }).catch(() => {});
+    await n.LocalNotifications.schedule({
+      notifications: [{
+        id: opts.id,
+        title: opts.title,
+        body: opts.body,
+        // Capacitor 8 supports `every` for recurring schedules — cast to any to
+        // bypass the slim type we declared above without expanding it.
+        schedule: opts.every
+          ? ({ at: opts.fireAt, every: opts.every, repeats: true } as any)
+          : { at: opts.fireAt },
+        smallIcon: "ic_stat_anical",
+        extra: { url: opts.url },
+      }],
+    });
+    return;
+  }
+
+  // Web fallback: setTimeout, one-shot only (browsers can't reliably do
+  // background recurring notifications without service workers).
+  if (typeof window === "undefined" || !("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  const delay = Math.max(0, opts.fireAt.getTime() - Date.now());
+  const handle = window.setTimeout(() => {
+    try {
+      const note = new Notification(opts.title, {
+        body: opts.body,
+        icon: "/icon-512.png",
+        badge: "/icon-512.png",
+        tag: `anical-${opts.id}`,
+      });
+      if (opts.url) note.onclick = () => window.open(opts.url, "_blank");
+    } catch {}
+  }, delay);
+  webTimers.set(opts.id, handle);
+}
+
+export async function cancelStandalone(id: number): Promise<void> {
+  const n = await getNative();
+  if (n) {
+    await n.LocalNotifications.cancel({ notifications: [{ id }] }).catch(() => {});
+    return;
+  }
+  const handle = webTimers.get(id);
+  if (handle) { window.clearTimeout(handle); webTimers.delete(id); }
 }

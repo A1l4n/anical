@@ -3,6 +3,7 @@ import { Capacitor } from "@capacitor/core";
 import { Haptics, ImpactStyle } from "@capacitor/haptics";
 import * as notif from "@/lib/notifications";
 import type { ScheduleEntry } from "@/lib/notifications";
+import { scheduleStandalone, cancelStandalone, VOTE_OPEN_NOTIF_ID, VOTE_WINNER_NOTIF_ID } from "@/lib/notifications";
 import {
   useAnimeEpisodes,
   getWatchedEpisodes,
@@ -24,6 +25,21 @@ import {
   getMangaPlusLink,
   AFFILIATE_DISCLAIMER,
 } from "@/lib/affiliates";
+import {
+  getCandidates,
+  submitVote,
+  getMyVote,
+  getResults,
+  buildAniListLookup,
+  getWeekId,
+  getVoteCloseJst,
+  getTimeUntil,
+  isWinnerWindow,
+  nextMondayNotifyAt,
+  type VoteCandidate,
+  type ResultRow,
+  type AniListRanking,
+} from "@/lib/voting";
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -707,7 +723,7 @@ type IconName =
   | "search" | "close" | "back" | "chevronDown" | "chevronUp" | "chevronRight" | "chevronLeft"
   | "share" | "play" | "stop" | "bell" | "bellOff" | "eye" | "eyeOff"
   | "sun" | "moon" | "refresh" | "settings" | "clock" | "calendar"
-  | "filter" | "trending" | "live" | "check" | "spoiler" | "external";
+  | "filter" | "trending" | "live" | "check" | "spoiler" | "external" | "trophy" | "vote";
 
 function Icon({ name, size = 22, color = "currentColor", strokeWidth = 2 }: { name: IconName; size?: number; color?: string; strokeWidth?: number }) {
   const s = size;
@@ -784,6 +800,10 @@ function Icon({ name, size = 22, color = "currentColor", strokeWidth = 2 }: { na
       return <svg {...common}><path d="M5 12l5 5L20 7"/></svg>;
     case "external":
       return <svg {...common}><path d="M14 4h6v6M20 4l-9 9M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>;
+    case "trophy":
+      return <svg {...common}><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 4h3v3a3 3 0 0 1-3 3M7 4H4v3a3 3 0 0 0 3 3"/></svg>;
+    case "vote":   // ballot box
+      return <svg {...common}><rect x="3" y="9" width="18" height="12" rx="2.5"/><path d="M9 9V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v4"/><path d="M9 14h6"/></svg>;
     default:
       return null;
   }
@@ -3596,6 +3616,317 @@ function DiscussionsView({ favAnime, allAnime, onOpenCommunity }: { favAnime: An
   );
 }
 
+// ── Anime of the Week — Vote view ──────────────────────────────────────────────
+// Weekly poll of 6 currently-airing anime. One vote per device, changeable until
+// Sunday 23:00 JST. Results cross-referenced against AniList trending for
+// credibility. Renders a winner-reveal flow on Sunday 23:00 → Monday 00:01 JST.
+function VoteView({ onScheduleSundayNotif }: { onScheduleSundayNotif: () => void }) {
+  const [candidates, setCandidates] = useState<VoteCandidate[]>([]);
+  const [candidatesLoading, setCandidatesLoading] = useState(true);
+  const [candidatesError, setCandidatesError] = useState<string | null>(null);
+
+  const [myVote, setMyVote] = useState<{ anime_id: number; anime_title: string } | null>(null);
+  const [results, setResults] = useState<{ rows: ResultRow[]; total: number }>({ rows: [], total: 0 });
+  const [resultsLoading, setResultsLoading] = useState(true);
+  const [anilist, setAnilist] = useState<Map<number, AniListRanking>>(new Map());
+
+  const [pending, setPending] = useState<VoteCandidate | null>(null); // tap-to-confirm
+  const [submitting, setSubmitting] = useState(false);
+
+  // Tick every 60s so countdown stays fresh + we re-fetch results
+  const [, setTick] = useState(0);
+  useEffect(() => { const id = setInterval(() => setTick((t) => t + 1), 60_000); return () => clearInterval(id); }, []);
+
+  const weekId = getWeekId();
+  const closeAt = getVoteCloseJst();
+  const countdown = getTimeUntil(closeAt);
+  const inWinnerWindow = isWinnerWindow();
+
+  // ── Initial loads ──
+  useEffect(() => {
+    let cancelled = false;
+    setCandidatesLoading(true); setCandidatesError(null);
+    getCandidates(weekId)
+      .then((c) => { if (!cancelled) setCandidates(c); })
+      .catch((e) => { if (!cancelled) setCandidatesError(e?.message || "Couldn't load candidates"); })
+      .finally(() => { if (!cancelled) setCandidatesLoading(false); });
+    getMyVote(weekId).then((v) => { if (!cancelled) setMyVote(v); });
+    return () => { cancelled = true; };
+  }, [weekId]);
+
+  // Refresh results every 60s if user has voted (or always during winner window)
+  useEffect(() => {
+    if (!myVote && !inWinnerWindow) return;
+    let cancelled = false;
+    const fetchOnce = () => {
+      setResultsLoading(true);
+      getResults(weekId).then((r) => { if (!cancelled) setResults(r); }).catch(() => {}).finally(() => { if (!cancelled) setResultsLoading(false); });
+    };
+    fetchOnce();
+    const id = setInterval(fetchOnce, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [myVote, inWinnerWindow, weekId]);
+
+  // AniList trending cross-reference — runs once, cached for 6h
+  useEffect(() => {
+    buildAniListLookup(weekId).then((m) => setAnilist(m)).catch(() => {});
+  }, [weekId]);
+
+  const handleSelect = (c: VoteCandidate) => {
+    Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+    setPending((curr) => (curr?.mal_id === c.mal_id ? null : c));
+  };
+
+  const handleConfirm = async () => {
+    if (!pending || submitting) return;
+    setSubmitting(true);
+    try {
+      const r = await submitVote(pending);
+      if (r.success) {
+        setMyVote({ anime_id: pending.mal_id, anime_title: pending.title });
+        setPending(null);
+        Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
+        // Schedule the Sunday winner notification on first vote
+        onScheduleSundayNotif();
+        // Trigger an immediate results fetch
+        getResults(weekId).then(setResults).catch(() => {});
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const totalVotes = results.total;
+  const showResults = !!myVote || inWinnerWindow || totalVotes >= 20;
+  const winner = inWinnerWindow && results.rows.length > 0 ? results.rows[0] : null;
+
+  return (
+    <div style={{ padding:"4px 16px 24px" }}>
+      {/* Hero */}
+      <div style={{
+        marginTop:8, marginBottom:18,
+        background:`linear-gradient(135deg, rgba(255,107,26,.22), rgba(220,86,16,.12))`,
+        border:`1px solid ${OR3}`,
+        borderRadius:18, padding:"18px 18px 16px",
+        position:"relative", overflow:"hidden",
+      } as React.CSSProperties}>
+        <div style={{ position:"absolute", top:-30, right:-20, fontSize:120, opacity:.08, pointerEvents:"none" }}>🏆</div>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+          <Icon name="trophy" size={16} color={OR} strokeWidth={2.2}/>
+          <span style={{ fontSize:10, fontWeight:800, letterSpacing:".8px", textTransform:"uppercase", color:OR }}>
+            {inWinnerWindow ? "This week's winner" : "Anime of the Week"}
+          </span>
+        </div>
+        <div style={{ fontSize:22, fontWeight:900, color:TX, letterSpacing:"-.5px", lineHeight:1.2, marginBottom:6 }}>
+          {inWinnerWindow ? winner?.anime_title || "Calculating…" : "Vote for your favorite"}
+        </div>
+        <div style={{ fontSize:12.5, color:MT, fontWeight:600 }}>
+          {inWinnerWindow ? (
+            <>Voted by <strong style={{ color:OR }}>{totalVotes}</strong> fan{totalVotes === 1 ? "" : "s"} this week</>
+          ) : myVote ? (
+            <>You voted for <strong style={{ color:OR }}>{myVote.anime_title}</strong> · Change until Sunday</>
+          ) : (
+            <>Closes in <strong style={{ color:OR }}>
+              {countdown.days > 0 ? `${countdown.days}d ${countdown.hours}h`
+                : countdown.hours > 0 ? `${countdown.hours}h ${countdown.minutes}m`
+                : `${countdown.minutes}m`}
+            </strong></>
+          )}
+        </div>
+      </div>
+
+      {/* Candidate grid */}
+      {!inWinnerWindow && (
+        <>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontSize:11, fontWeight:800, color:MT2, letterSpacing:".8px", textTransform:"uppercase" as const }}>
+            <Icon name="vote" size={12} color={MT2}/>
+            <span>This week's candidates</span>
+            <div style={{ flex:1, height:1, background:BD }}/>
+          </div>
+          {candidatesLoading ? (
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:10, marginBottom:18 }}>
+              {[0,1,2,3,4,5].map((i) => <div key={i} className="anical-skel" style={{ aspectRatio:"3/4", borderRadius:14 }}/>)}
+            </div>
+          ) : candidatesError ? (
+            <div style={{ padding:"20px 14px", borderRadius:14, background:BG3, border:`1px solid ${BD}`, textAlign:"center" as const, marginBottom:18 } as React.CSSProperties}>
+              <div style={{ fontSize:13, color:TX, marginBottom:6 }}>Couldn't load candidates</div>
+              <div style={{ fontSize:11, color:MT2 }}>{candidatesError}</div>
+            </div>
+          ) : (
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:10, marginBottom:18 }}>
+              {candidates.map((c, i) => {
+                const isMine = myVote?.anime_id === c.mal_id;
+                const isPending = pending?.mal_id === c.mal_id;
+                return (
+                  <div
+                    key={c.mal_id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Vote for ${c.title}`}
+                    aria-pressed={isMine || isPending}
+                    onClick={() => handleSelect(c)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleSelect(c); } }}
+                    style={{
+                      position:"relative", overflow:"hidden",
+                      background: isMine ? OR2 : isPending ? "rgba(139,92,246,.10)" : BG2,
+                      border:`2px solid ${isMine ? OR : isPending ? "rgba(139,92,246,.6)" : BD}`,
+                      borderRadius:14, cursor:"pointer", padding:0,
+                      fontFamily:"inherit", color:TX, textAlign:"left" as const,
+                      animation:`cardIn .35s ${i*30}ms both`,
+                      transition:"transform .15s, border-color .2s, box-shadow .2s",
+                      boxShadow: isMine ? `0 6px 24px -4px rgba(255,107,26,.45)` : isPending ? `0 6px 22px -4px rgba(139,92,246,.4)` : "none",
+                    } as React.CSSProperties}
+                  >
+                    <div style={{ position:"relative", width:"100%", aspectRatio:"3/4", background:BG4 }}>
+                      {c.image_url
+                        ? <img src={c.image_url} alt={c.title} loading="lazy" decoding="async" style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" } as React.CSSProperties}/>
+                        : <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", color:MT2 }}><Icon name="trophy" size={32} color={MT2}/></div>}
+                      <div style={{ position:"absolute", inset:0, background:"linear-gradient(180deg, transparent 45%, rgba(0,0,0,.85))" }}/>
+                      {/* Score badge */}
+                      {c.score > 0 && (
+                        <span style={{ position:"absolute", top:8, left:8, fontSize:9.5, fontWeight:800, padding:"3px 8px", borderRadius:99, background:"rgba(0,0,0,.6)", color:"#fff", backdropFilter:"blur(8px)" } as React.CSSProperties}>★ {c.score.toFixed(2)}</span>
+                      )}
+                      {/* Your vote badge */}
+                      {isMine && (
+                        <span style={{ position:"absolute", top:8, right:8, fontSize:9, fontWeight:800, padding:"3px 8px", borderRadius:99, background:OR, color:"#fff", letterSpacing:".4px", display:"inline-flex", alignItems:"center", gap:3 } as React.CSSProperties}>
+                          <Icon name="check" size={10} color="#fff" strokeWidth={3}/>
+                          <span>YOUR VOTE</span>
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ padding:"9px 10px 11px" }}>
+                      <div style={{ fontSize:13, fontWeight:800, lineHeight:1.3, color:TX, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as const, minHeight:34, letterSpacing:"-.1px" } as React.CSSProperties}>{c.title}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Confirm bar — appears when a candidate is pending */}
+      {pending && !myVote && (
+        <div style={{ position:"sticky", bottom:90, zIndex:30, marginBottom:14, padding:"14px 16px", background:BG2, border:`1px solid ${BD2}`, borderRadius:16, display:"flex", alignItems:"center", gap:10, boxShadow:"0 12px 32px -8px rgba(0,0,0,.45)" } as React.CSSProperties}>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:10, color:MT2, fontWeight:700, letterSpacing:".6px", textTransform:"uppercase" as const }}>Confirm vote</div>
+            <div style={{ fontSize:13.5, fontWeight:800, color:TX, marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{pending.title}</div>
+          </div>
+          <button
+            onClick={() => setPending(null)}
+            style={{ padding:"9px 12px", borderRadius:10, border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" } as React.CSSProperties}
+          >Cancel</button>
+          <button
+            onClick={handleConfirm}
+            disabled={submitting}
+            style={{ padding:"9px 16px", borderRadius:10, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:12.5, fontWeight:800, cursor:submitting ? "default" : "pointer", fontFamily:"inherit", boxShadow:`0 6px 18px -4px rgba(255,107,26,.5)` } as React.CSSProperties}
+          >{submitting ? "…" : "Confirm"}</button>
+        </div>
+      )}
+
+      {/* Change-vote bar */}
+      {myVote && pending && pending.mal_id !== myVote.anime_id && (
+        <div style={{ position:"sticky", bottom:90, zIndex:30, marginBottom:14, padding:"14px 16px", background:BG2, border:`1px solid ${BD2}`, borderRadius:16, display:"flex", alignItems:"center", gap:10, boxShadow:"0 12px 32px -8px rgba(0,0,0,.45)" } as React.CSSProperties}>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:10, color:MT2, fontWeight:700, letterSpacing:".6px", textTransform:"uppercase" as const }}>Change your vote to</div>
+            <div style={{ fontSize:13.5, fontWeight:800, color:TX, marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{pending.title}</div>
+          </div>
+          <button onClick={() => setPending(null)} style={{ padding:"9px 12px", borderRadius:10, border:`1px solid ${BD}`, background:BG3, color:MT, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" } as React.CSSProperties}>Cancel</button>
+          <button onClick={handleConfirm} disabled={submitting} style={{ padding:"9px 16px", borderRadius:10, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:12.5, fontWeight:800, cursor:submitting?"default":"pointer", fontFamily:"inherit", boxShadow:`0 6px 18px -4px rgba(255,107,26,.5)` } as React.CSSProperties}>{submitting ? "…" : "Change"}</button>
+        </div>
+      )}
+
+      {/* Live results */}
+      {showResults && (
+        <div style={{ marginBottom:18 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontSize:11, fontWeight:800, color:MT2, letterSpacing:".8px", textTransform:"uppercase" as const }}>
+            <Icon name="trending" size={12} color={MT2}/>
+            <span>{inWinnerWindow ? "Final standings" : "Live results"}</span>
+            {!resultsLoading && <span style={{ fontSize:10, padding:"1px 7px", borderRadius:99, background:BG3, border:`1px solid ${BD}`, color:MT }}>{totalVotes} vote{totalVotes === 1 ? "" : "s"}</span>}
+            <div style={{ flex:1, height:1, background:BD }}/>
+          </div>
+          {candidates.length > 0 && (
+            <div style={{ display:"flex", flexDirection:"column" as const, gap:6 }}>
+              {candidates.map((c, i) => {
+                const row = results.rows.find((r) => r.anime_id === c.mal_id);
+                const count = row?.count || 0;
+                const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+                const isWinner = inWinnerWindow && i === 0 && winner?.anime_id === c.mal_id;
+                const isMine = myVote?.anime_id === c.mal_id;
+                return (
+                  <div key={c.mal_id} style={{ padding:"10px 12px", borderRadius:12, background: isWinner ? OR2 : BG3, border:`1px solid ${isWinner ? OR : isMine ? OR3 : BD}`, position:"relative", overflow:"hidden" } as React.CSSProperties}>
+                    {/* Progress bar fill (behind text) */}
+                    <div style={{ position:"absolute", inset:0, width:`${pct}%`, background: isWinner ? `linear-gradient(135deg, ${OR2}, rgba(255,107,26,.04))` : `linear-gradient(135deg, rgba(255,107,26,.08), rgba(255,107,26,.02))`, transition:"width .35s cubic-bezier(.2,.7,.2,1)" } as React.CSSProperties}/>
+                    <div style={{ position:"relative", display:"flex", alignItems:"center", gap:8 }}>
+                      {isWinner && <span style={{ fontSize:14, lineHeight:1 }}>👑</span>}
+                      <span style={{ fontSize:12.5, fontWeight:700, color: isWinner ? OR : TX, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{c.title}</span>
+                      {isMine && !isWinner && <span style={{ fontSize:9, fontWeight:800, padding:"1px 6px", borderRadius:99, background:OR2, color:OR, border:`1px solid ${OR3}`, letterSpacing:".3px" } as React.CSSProperties}>YOU</span>}
+                      <span style={{ fontSize:12, fontWeight:800, color: isWinner ? OR : MT, minWidth:36, textAlign:"right" as const } as React.CSSProperties}>{pct}%</span>
+                      <span style={{ fontSize:10, color:MT2, minWidth:32, textAlign:"right" as const, fontWeight:600 } as React.CSSProperties}>{count}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {!myVote && !inWinnerWindow && totalVotes < 20 && (
+            <div style={{ marginTop:10, fontSize:10.5, color:MT2, textAlign:"center" as const, fontStyle:"italic" as const } as React.CSSProperties}>
+              Vote to see live results (or wait until {Math.max(0, 20 - totalVotes)} more vote{20 - totalVotes === 1 ? "" : "s"} come in).
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Cross-platform comparison */}
+      {showResults && anilist.size > 0 && (
+        <div style={{ marginBottom:18 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontSize:11, fontWeight:800, color:MT2, letterSpacing:".8px", textTransform:"uppercase" as const }}>
+            <Icon name="external" size={12} color={MT2}/>
+            <span>Cross-platform check</span>
+            <div style={{ flex:1, height:1, background:BD }}/>
+          </div>
+          <div style={{ padding:"10px 12px", background:BG3, border:`1px solid ${BD}`, borderRadius:12, marginBottom:8, fontSize:11, color:MT, lineHeight:1.55 } as React.CSSProperties}>
+            How our vote compares to <strong style={{ color:TX }}>AniList trending</strong> for the current season.
+          </div>
+          <div style={{ display:"flex", flexDirection:"column" as const, gap:6 } as React.CSSProperties}>
+            {candidates.map((c) => {
+              const row = results.rows.find((r) => r.anime_id === c.mal_id);
+              const ourCount = row?.count || 0;
+              const ourPct = totalVotes > 0 ? Math.round((ourCount / totalVotes) * 100) : 0;
+              const al = anilist.get(c.mal_id);
+              return (
+                <div key={c.mal_id} style={{ padding:"9px 12px", background:BG2, border:`1px solid ${BD}`, borderRadius:10, display:"flex", alignItems:"center", gap:10 } as React.CSSProperties}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:12, fontWeight:700, color:TX, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{c.title}</div>
+                    <div style={{ fontSize:10, color:MT2, marginTop:2, display:"flex", gap:8, flexWrap:"wrap" as const }}>
+                      <span><span style={{ color:OR, fontWeight:700 }}>AniCal</span> {ourPct}%</span>
+                      <span>·</span>
+                      {al ? (
+                        <>
+                          <span><span style={{ color:"rgba(139,179,255,1)", fontWeight:700 }}>AniList</span> #{al.trendingRank}</span>
+                          <span>·</span>
+                          <span>★ {(al.meanScore / 10).toFixed(2)}</span>
+                        </>
+                      ) : (
+                        <span style={{ color:MT2, fontStyle:"italic" as const }}>not in AniList trending list</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Disclaimer */}
+      <div style={{ fontSize:10.5, color:MT2, textAlign:"center" as const, marginTop:10, lineHeight:1.55 } as React.CSSProperties}>
+        Vote weekly · one vote per device · change allowed until Sunday 23:00 JST
+      </div>
+    </div>
+  );
+}
+
 // ── News view ──────────────────────────────────────────────────────────────────
 const RUMOR_KEYWORDS = ["rumor", "rumour", "leak", "leaked", "allegedly", "unconfirmed", "insider", "report claims", "reportedly", "source says", "sources say", "it is said"];
 
@@ -3971,7 +4302,7 @@ function SettingRow({ icon, label, description, checked, onToggle, toggleLabel, 
 // Scrollable, interactive, icon-driven. Each tab uses SVG icons that fill in
 // when active. Animated underline glides between tabs. The Community tab is
 // hidden when the user opts out in settings.
-type NavId = "schedule"|"month"|"community"|"news"|"stats";
+type NavId = "schedule"|"month"|"community"|"vote"|"news"|"stats";
 
 function BottomNav({ view, setView, favCount, hideCommunity }: { view: string; setView: (v: NavId) => void; favCount: number; hideCommunity: boolean }) {
   type Tab = { id: NavId; icon: IconName; activeIcon?: IconName; label: string; accent?: string };
@@ -3979,6 +4310,7 @@ function BottomNav({ view, setView, favCount, hideCommunity }: { view: string; s
     { id:"schedule",  icon:"calendar",  label:"Schedule"  },
     { id:"month",     icon:"upcoming",  label:"Upcoming"  },
     { id:"community", icon:"community", label:"Community" },
+    { id:"vote",      icon:"trophy",    label:"Vote"      },
     { id:"news",      icon:"news",      label:"News"      },
     { id:"stats",     icon:"star", activeIcon:"starFilled", label:"My List", accent: OR },
   ];
@@ -4350,7 +4682,7 @@ export default function AniCal() {
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadMsg, setLoadMsg] = useState("Starting up…");
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"schedule"|"month"|"community"|"news"|"stats">("schedule");
+  const [view, setView] = useState<"schedule"|"month"|"community"|"vote"|"news"|"stats">("schedule");
   const [selectedDay, setSelectedDay] = useState(todayDayIdx);
   // Lazy-init from LS so we never race the "save" effect with the empty default.
   // Previous pattern (`useState([])` + a `useEffect` loader) had a subtle race:
@@ -4369,7 +4701,9 @@ export default function AniCal() {
     return d;
   });
   const [noSpoiler, setNoSpoiler] = useState<boolean>(() => LS.get<boolean>("anical_no_spoiler", false));
-  const [hideCommunity, setHideCommunity] = useState<boolean>(() => LS.get<boolean>("anical_hide_community", false));
+  // Community is hidden by default for the v1 launch — focus is on schedule + tracker + vote.
+  // Users can re-enable it any time via Settings → Navigation → Community tab.
+  const [hideCommunity, setHideCommunity] = useState<boolean>(() => LS.get<boolean>("anical_hide_community", true));
   const [streamOffsetMin, setStreamOffsetMin] = useState<number>(() => LS.get<number>("anical_stream_offset_min", 0));
   const [ratingFilter, setRatingFilter] = useState<number>(0); // 0 = no filter; 7/8/9 = ≥ that score
   const [showOnboarding, setShowOnboarding] = useState<boolean>(() => !LS.get<boolean>("anical_onboarded_v1", false));
@@ -4604,6 +4938,39 @@ export default function AniCal() {
     notif.schedule(entries).catch(() => {});
   }, [boot, favAnime, notifSettings, notifPerm]);
 
+  // ── Weekly vote-opens notification ─────────────────────────────────────────
+  // Schedules a recurring Monday 11:00 (user-local) reminder. Persists via
+  // Capacitor's `every: "week"` repeat so it fires even after the app is killed.
+  // The notif lives outside cancelAll()'s scope (PRESERVED_IDS), so favs
+  // changes don't wipe it.
+  useEffect(() => {
+    if (boot !== "ready") return;
+    if (notifPerm !== "granted") return;
+    const nextMonday = nextMondayNotifyAt(11);
+    scheduleStandalone({
+      id: VOTE_OPEN_NOTIF_ID,
+      title: "🗳️ This week's anime vote is open",
+      body: "Pick your favorite currently-airing show — closes Sunday.",
+      fireAt: nextMonday,
+      every: "week",
+    }).catch(() => {});
+  }, [boot, notifPerm]);
+
+  // Schedule the one-shot Sunday winner notification after the user submits
+  // their first vote of the week. Called from VoteView via prop.
+  const scheduleSundayWinnerNotif = useCallback(() => {
+    if (notifPerm !== "granted") return;
+    const close = getVoteCloseJst(); // Sunday 23:00 JST converted to UTC
+    scheduleStandalone({
+      id: VOTE_WINNER_NOTIF_ID,
+      title: "🏆 This week's winner is announced",
+      body: "Tap to see the Anime of the Week.",
+      fireAt: close,
+    }).catch(() => {});
+  }, [notifPerm]);
+  // Quiet the unused-variable warning for callers that haven't been wired yet
+  void cancelStandalone;
+
   const downloadExtension = () => {
     fetch("./anical-extension.zip")
       .then((r) => { if (!r.ok) throw new Error("Download failed"); return r.blob(); })
@@ -4807,6 +5174,9 @@ export default function AniCal() {
                   onOpenCommunity={(a) => setCommunityAnime(a)}
                   onOpenAnime={(a) => setDetailAnime(a)}
                   onToast={showToast}/>
+              )}
+              {view === "vote" && (
+                <VoteView onScheduleSundayNotif={scheduleSundayWinnerNotif}/>
               )}
               {view === "news" && (
                 <NewsView favAnime={favAnime} noSpoiler={noSpoiler}/>
