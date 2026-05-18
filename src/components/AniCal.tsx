@@ -1151,13 +1151,20 @@ function AnimeNewsSection({ anime, news, loading }: { anime: Anime; news: NewsIt
 // Continue Watching shortcut, and a per-anime spoiler shield override. Fires
 // `onFinale` callback when the user marks the last episode watched, which the
 // parent uses to surface the merch/affiliate celebration modal.
-function EpisodeList({ animeId, totalEps, noSpoiler, onFinale }: {
+//
+// Only active when the user has favorited the show — keeps the detail sheet
+// uncluttered for shows you're still browsing, and avoids burning Jikan
+// rate-limit quota on episode fetches for shows you'll never track.
+function EpisodeList({ animeId, totalEps, noSpoiler, isFav, onFinale, onAddToFavorites }: {
   animeId: number;
   totalEps: number | null | undefined;
   noSpoiler: boolean;
+  isFav: boolean;
   onFinale: () => void;
+  onAddToFavorites: () => void;
 }) {
-  const { episodes, loading, error, refetch } = useAnimeEpisodes(animeId);
+  // Pass `null` to the hook when not favorited so we skip the Jikan fetch entirely
+  const { episodes, loading, error, refetch } = useAnimeEpisodes(isFav ? animeId : null);
   // Re-render trigger for watched state (LS is read on every render so a tick is enough)
   const [, setNudge] = useState(0);
   const bump = () => setNudge((n) => n + 1);
@@ -1215,6 +1222,45 @@ function EpisodeList({ animeId, totalEps, noSpoiler, onFinale }: {
     setShieldMenuOpen(false);
     Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
   };
+
+  // Not-yet-favorited shows get a lightweight CTA instead of the full tracker.
+  // Avoids cluttering the detail sheet for shows the user is still browsing.
+  if (!isFav) {
+    return (
+      <div style={{ marginBottom:18 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10, fontSize:11, fontWeight:800, color:MT2, letterSpacing:".8px", textTransform:"uppercase" as const }}>
+          <Icon name="play" size={12} color={MT2}/>
+          <span>Episode tracker</span>
+          <div style={{ flex:1, height:1, background:BD }}/>
+        </div>
+        <div style={{
+          display:"flex", flexDirection:"column" as const, alignItems:"center", gap:10,
+          padding:"22px 18px",
+          background:`linear-gradient(145deg, ${BG2}, ${BG3})`,
+          border:`1px dashed ${BD2}`,
+          borderRadius:14,
+        } as React.CSSProperties}>
+          <div style={{ width:48, height:48, borderRadius:12, background:OR2, border:`1px solid ${OR3}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 } as React.CSSProperties}>
+            <Icon name="starFilled" size={22} color={OR}/>
+          </div>
+          <div style={{ fontSize:14, fontWeight:800, color:TX, textAlign:"center" as const, letterSpacing:"-.1px" } as React.CSSProperties}>
+            Track your progress
+          </div>
+          <div style={{ fontSize:12, color:MT, textAlign:"center" as const, lineHeight:1.55, maxWidth:280 } as React.CSSProperties}>
+            Add this show to your watchlist to mark episodes watched, see progress, and unlock a celebration when you finish.
+          </div>
+          <button
+            aria-label="Add to favorites and unlock episode tracker"
+            onClick={() => { Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {}); onAddToFavorites(); }}
+            style={{ marginTop:4, padding:"10px 18px", borderRadius:99, border:"none", background:`linear-gradient(135deg, ${OR}, #cc5610)`, color:"#fff", fontSize:12.5, fontWeight:800, cursor:"pointer", fontFamily:"inherit", display:"inline-flex", alignItems:"center", gap:6, boxShadow:`0 6px 18px -4px rgba(255,107,26,.5)` } as React.CSSProperties}
+          >
+            <Icon name="star" size={13} color="#fff" strokeWidth={2.4}/>
+            <span>Add to favorites</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ marginBottom:18 }}>
@@ -1504,11 +1550,14 @@ function DetailSheet({ anime, favorites, onClose, onToggleFav, onOpenCommunity, 
           {/* Latest news for this anime — pulled from Jikan; only shown when we have results */}
           <AnimeNewsSection anime={anime} news={animeNews} loading={newsLoading}/>
 
-          {/* Episode tracker — checkboxes, progress, Continue Watching, spoiler shield */}
+          {/* Episode tracker — only active for shows in the user's watchlist.
+              Non-favorited shows see a CTA empty-state instead. */}
           <EpisodeList
             animeId={anime.id}
             totalEps={anime.episodes ?? null}
             noSpoiler={noSpoiler}
+            isFav={isFav}
+            onAddToFavorites={() => onToggleFav(anime.id)}
             onFinale={() => setFinaleAnime({ id: anime.id, title: anime.title, image_url: anime.image_url })}
           />
 
